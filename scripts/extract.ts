@@ -55,7 +55,7 @@ async function callAnthropic(payload: any): Promise<string> {
   return textBlock && 'text' in textBlock ? textBlock.text : "";
 }
 
-function mergeResults(llmData: any, transcript: string) {
+function mergeResults(llmData: any, transcript: string, mode: "regex-only" | "llm+regex") {
   const regexData = {
     emails: extractEmails(transcript),
     phones: extractPhones(transcript),
@@ -63,7 +63,7 @@ function mergeResults(llmData: any, transcript: string) {
     upi: extractUpi(transcript),
     feeWording: extractFeeWording(transcript),
   };
-  const merged = { ...llmData };
+  const merged = { ...llmData, extractionMode: mode };
   if (regexData.emails.length) merged.emails = regexData.emails;
   if (regexData.phones.length) merged.phones = regexData.phones;
   if (regexData.urls.length) merged.urls = regexData.urls;
@@ -76,21 +76,62 @@ function mergeResults(llmData: any, transcript: string) {
   return merged;
 }
 
+function getRegexOnlyBase(transcript: string) {
+  return {
+    transcript,
+    platform: undefined,
+    company: undefined,
+    role: undefined,
+    recruiterName: undefined,
+    emails: [],
+    phones: [],
+    urls: [],
+    payment: { requested: false },
+    pressureTactics: [],
+    stipend: undefined,
+    location: undefined,
+    confidence: {},
+  };
+}
+
 async function main() {
-  const arg = process.argv[2];
-  if (!arg) {
-    console.error("Usage: npm run extract -- <file-or-text-or-url>");
+  const args = process.argv.slice(2);
+  const regexOnly = args.includes("--regex-only");
+  const targetArg = args.find(a => !a.startsWith("--"));
+
+  if (!targetArg) {
+    console.error("Usage: npm run extract -- [--regex-only] <file-or-text-or-url>");
     process.exit(1);
   }
-  const input = readInput(arg);
+  
+  let input;
+  try {
+    input = readInput(targetArg);
+  } catch (e) {
+    console.error("Failed to read input:", e);
+    process.exit(1);
+  }
+
+  const transcript = typeof input.content === "string" && input.type !== "image" ? input.content : "";
+  
+  if (regexOnly) {
+    const base = getRegexOnlyBase(transcript);
+    const merged = mergeResults(base, transcript, "regex-only");
+    console.log(JSON.stringify(merged, null, 2));
+    return;
+  }
+
   const payload = buildMessage(input);
   
   let rawJson = "";
   try {
     rawJson = await callAnthropic(payload);
   } catch (e) {
-    console.error("Anthropic call failed:", e);
-    process.exit(1);
+    console.warn("Anthropic call failed. Falling back to regex-only. Error:", (e as Error).message);
+    const base = getRegexOnlyBase(transcript);
+    const merged = mergeResults(base, transcript, "regex-only");
+    console.log(JSON.stringify(merged, null, 2));
+    return;
   }
 
   let parsed: any = null;
@@ -111,23 +152,25 @@ async function main() {
     try {
       rawJson = await callAnthropic(payload);
     } catch (e) {
-      console.error("Retry Anthropic call failed:", e);
-      process.exit(1);
+      console.warn("Retry Anthropic call failed. Falling back to regex-only.");
+      const base = getRegexOnlyBase(transcript);
+      const merged = mergeResults(base, transcript, "regex-only");
+      console.log(JSON.stringify(merged, null, 2));
+      return;
     }
     parsed = tryParse(rawJson);
     result = parsed ? ClaimsSchema.safeParse(parsed) : null;
   }
 
   if (!result || !result.success) {
-    throw new ExtractionError(
-      "Failed to extract valid JSON from LLM output after retry.\n" + 
-      "LLM Output:\n" + rawJson + "\n" +
-      (result && !result.success ? "Validation Errors:\n" + JSON.stringify(result.error.format()) : "")
-    );
+    console.warn("Failed to extract valid JSON from LLM output after retry. Falling back to regex-only.");
+    const base = getRegexOnlyBase(transcript);
+    const merged = mergeResults(base, transcript, "regex-only");
+    console.log(JSON.stringify(merged, null, 2));
+    return;
   }
 
-  const transcript = typeof input.content === "string" && input.type !== "image" ? input.content : "";
-  const merged = mergeResults(result.data, transcript);
+  const merged = mergeResults(result.data, transcript, "llm+regex");
   console.log(JSON.stringify(merged, null, 2));
 }
 

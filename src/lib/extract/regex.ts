@@ -1,29 +1,68 @@
 export const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-export const phoneRegex = /(?:\+91[\s-]?)?(?:\d{5}[\s-]?\d{5}|\d{4}[\s-]?\d{3}[\s-]?\d{3})/g;
-export const urlRegex = /(https?:\/\/[^\s]+)/g;
-export const upiRegex = /[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}/g;
-export const feeWordingRegex = /(?:pay|payment|fee|charge|registration)[^.,]*(?:\b(?:₹|Rs\.?|INR)\s?\d+[\d,]*(?!\s*(?:\/|\sper\s)\s*(?:month|yr|year|week|day|hr|hour)))?/gi;
+
+// 10 digit numbers starting with 6-9, optional +91, 0, optional spaces/hyphens
+export const phoneRegex = /(?:(?:\+91|0)?[\s-]?)?[6-9](?:\d{9}|\d{4}[\s-]?\d{5}|\d{2}[\s-]?\d{3}[\s-]?\d{4})\b/g;
+
+// URL regex to match with or without http://, and short.link/apply
+export const urlRegex = /(?:https?:\/\/)?(?:www\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{2,6}\b[-a-zA-Z0-9()@:%_+.~#?&//=]*/gi;
+
+// UPI ID usually doesn't have a dot after the @
+export const upiRegex = /\b[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z0-9]{2,64}\b(?!\.[a-zA-Z])/g;
+
+// Fees
+export const feeWordingRegex = /(?:pay|payment|fee|charge|registration|deposit|send)[^.!?;]*(?:\b(?:₹|Rs\.?|INR)?\s?\d+[\d,]*)?/gi;
 
 export function extractEmails(text: string): string[] {
   return Array.from(new Set(text.match(emailRegex) || []));
 }
+
 export function extractPhones(text: string): string[] {
-  return Array.from(new Set(text.match(phoneRegex) || []));
+  const matches = text.match(phoneRegex) || [];
+  const cleaned = matches.map(m => m.trim());
+  return Array.from(new Set(cleaned));
 }
+
 export function extractUrls(text: string): string[] {
-  return Array.from(new Set(text.match(urlRegex) || []));
+  const matches = text.match(urlRegex) || [];
+  const emails = extractEmails(text);
+  const cleaned = matches.map((url) => {
+    let cleanUrl = url.replace(/[.,;)]+$/, "");
+    if (!/^https?:\/\//i.test(cleanUrl)) {
+      cleanUrl = "http://" + cleanUrl;
+    }
+    return cleanUrl;
+  }).filter((url) => {
+    // If the bare domain/path without http:// matches an email exactly, ignore it
+    const bare = url.replace(/^https?:\/\//i, "");
+    return !emails.includes(bare);
+  });
+  return Array.from(new Set(cleaned));
 }
+
 export function extractUpi(text: string): string[] {
-  return Array.from(new Set(text.match(upiRegex) || []));
+  const matches = text.match(upiRegex) || [];
+  // Exclude matches that are actually emails (e.g. if the regex missed the dot check somehow)
+  const filtered = matches.filter(m => !m.includes(".com") && !m.includes(".in") && !m.includes(".org"));
+  return Array.from(new Set(filtered));
 }
+
 export function extractFeeWording(text: string): string[] {
-  // Negative lookahead applied in the regex to skip stipends like "₹35,000/month"
-  // Let's refine fee wording detection to not blindly match "payment" without amounts, but the regex already handles this.
   const matches = text.match(feeWordingRegex) || [];
-  // Filter out some false positives if necessary, but the regex handles the /month negative lookahead.
-  const filtered = matches.filter(m => {
-    // Make sure we are not catching "stipend" around the match.
-    return !m.toLowerCase().includes("stipend");
+  const filtered = matches.filter((m) => {
+    const lower = text.toLowerCase();
+    
+    // Ignore negative phrases by checking the text around it, or just generally in the transcript if it's very explicit
+    if (lower.includes("no fee") || lower.includes("no fees") || lower.includes("never ask candidates for money") || lower.includes("free of charge")) {
+      return false;
+    }
+    
+    const mLower = m.toLowerCase();
+    // Ignore stipends / salaries
+    if (mLower.includes("stipend") || mLower.includes("salary") || mLower.includes("lpa") || mLower.match(/\b(?:month|yr|year|week|day|hr|hour)\b/)) {
+      return false;
+    }
+    
+    return true;
   });
   return Array.from(new Set(filtered));
 }

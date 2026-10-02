@@ -19,5 +19,6 @@ export const ClaimsSchema = z.object({
   pressureTactics: z.array(z.string()).optional(),
   stipend: z.string().optional(),
   location: z.string().optional(),
-  confidence: z.record(z.number()).optional()
+  confidence: z.record(z.number()).optional(),
+  extractionMode: z.enum(["regex-only", "llm+regex"]).optional(),
 });
