@@ -50,6 +50,14 @@ export async function analyzePost(text: string, imageUrl?: string, deps?: Verifi
          extracted.company = resolved.company.name;
        }
     }
+    
+    if (!extracted.company) {
+      const { inferCompanyFromText } = await import("./verify/data/companies");
+      const inferred = inferCompanyFromText(text);
+      if (inferred.company) {
+        extracted.company = inferred.company.name;
+      }
+    }
   }
 
   // Use dummy provider if deps not passed

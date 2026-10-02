@@ -5,7 +5,8 @@ CREATE TABLE "Scan" (
     "verdict" TEXT NOT NULL,
     "why" TEXT NOT NULL,
     "extractionMode" TEXT NOT NULL,
-    "redactedTranscript" TEXT
+    "redactedTranscript" TEXT,
+    "indicatorHashes" TEXT
 );
 
 -- CreateTable
@@ -41,3 +42,6 @@ CREATE TABLE "Report" (
     "note" TEXT,
     "reporterHash" TEXT NOT NULL
 );
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Report_indicatorHash_reporterHash_key" ON "Report"("indicatorHash", "reporterHash");

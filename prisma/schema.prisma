@@ -40,13 +40,17 @@ model Indicator {
   lastSeen    DateTime @default(now())
   reportCount Int      @default(0)
   scanCount   Int      @default(0)
+  Report      Report[]
 }
 
 model Report {
   id            String   @id @default(uuid())
   createdAt     DateTime @default(now())
+  indicator     Indicator @relation(fields: [indicatorHash], references: [hash])
   indicatorHash String
   type          String
   note          String?
   reporterHash  String
+  
+  @@unique([indicatorHash, reporterHash])
 }

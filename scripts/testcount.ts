@@ -4,7 +4,7 @@ import path from 'path';
 
 function run() {
   try {
-    execSync('npx vitest run --reporter=json --outputFile=.testcount.json', { encoding: 'utf-8', stdio: 'pipe' });
+    execSync('npx vitest run --no-file-parallelism --reporter=json --outputFile=.testcount.json', { encoding: 'utf-8', stdio: 'pipe' });
   } catch (_err: unknown) {
     // Tests might fail, that's fine, we still have the json
   }
@@ -37,7 +37,11 @@ function run() {
     let baselineData: Record<string, number> | null = null;
     try {
       const baselineRaw = fs.readFileSync('.testbaseline.json', 'utf-8');
-      baselineData = JSON.parse(baselineRaw);
+      const rawData = JSON.parse(baselineRaw);
+      baselineData = {};
+      for (const [k, v] of Object.entries(rawData)) {
+        baselineData[k.replace(/\\/g, '/')] = v as number;
+      }
     } catch {
       console.warn("No .testbaseline.json found, skipping baseline check.");
     }
@@ -60,6 +64,18 @@ function run() {
     if (baselineData && baselineData.total !== undefined && totalAll < baselineData.total) {
       console.error(`ERROR: Total test count dropped to ${totalAll} (baseline is ${baselineData.total})`);
       hasError = true;
+    }
+
+    if (baselineData) {
+      for (const [bFile, bCount] of Object.entries(baselineData)) {
+        if (bFile === 'total') continue;
+        const normalized = bFile.replace(/\\/g, '/');
+        const countObj = Object.values(counts).find((c, i) => Object.keys(counts)[i].replace(/\\/g, '/').endsWith(normalized));
+        if (!countObj) {
+           console.error(`ERROR: Baseline file ${normalized} is missing from test results!`);
+           hasError = true;
+        }
+      }
     }
     
     if (hasError) {

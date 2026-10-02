@@ -8,7 +8,7 @@ import { RateLimiter, InMemoryRateLimiter } from "../../../lib/rate-limit";
 export const runtime = "nodejs";
 
 const db = new PrismaClient();
-const limiter = new InMemoryRateLimiter();
+const limiter = new InMemoryRateLimiter(Date.now, 10, 10, 24 * 60 * 60 * 1000);
 
 const reportSchema = z.object({
   passportId: z.string().uuid(),
@@ -77,14 +77,14 @@ export async function POST(req: Request) {
     });
 
     if (recentReport) {
-      return NextResponse.json({ error: "Already reported recently" }, { status: 429 });
+      return NextResponse.json({ error: "Already reported recently" }, { status: 409 });
     }
 
     await db.report.create({
       data: {
         indicatorHash: targetHash,
         type: indicatorType,
-        note,
+        note: note ? redactText(note) : undefined,
         reporterHash
       }
     });

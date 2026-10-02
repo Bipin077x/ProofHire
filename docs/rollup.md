@@ -15,11 +15,14 @@ Individual claims return one of four statuses:
 - `VERIFIED`: Strong positive evidence found.
 - `UNCLEAR`: Conflicting data, minor mismatches, or missing context.
 - `NOT_VERIFIED`: No evidence could be found to verify the claim.
-- `RISK`: Active red flags (e.g., fee requested, lookalike domain).
+- `RISK`: Active red flags (e.g., fee requested, lookalike domain, multiple reports).
 
 ## The Rollup State Machine
 
 The `calculateRollup` function takes all `VerifyResult`s and computes a single `RollupResult` (`{ riskLevel, reasons }`). The logic flows strictly in this order:
+
+**Report Validation Rule:**
+Reports are heavily guarded against abuse. A "reports" claim only yields a `RISK` status if it has >= 3 reports from *distinct* IPs (reporterHashes). 1-2 reports yield an `UNCLEAR` status ("below the confirmation threshold"). Furthermore, official company domains and the top 1000 free-mail providers (like gmail.com) are excluded from report aggregation entirely to prevent false-flagging known legitimate infrastructure.
 
 1. **UNVERIFIED**
    - Condition: Empty transcript (or `transcriptEmpty` ruleId) OR `system.check_failed` ruleId.

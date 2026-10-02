@@ -4,11 +4,20 @@ export interface RateLimiter {
 
 export class InMemoryRateLimiter implements RateLimiter {
   private buckets = new Map<string, { tokens: number; lastRefill: number }>();
-  private readonly maxTokens = 10;
-  private readonly refillRate = 10; // tokens per minute
-  private readonly refillInterval = 60000; // 1 minute in ms
+  private readonly maxTokens: number;
+  private readonly refillRate: number;
+  private readonly refillInterval: number;
 
-  constructor(private readonly getNow: () => number = Date.now) {}
+  constructor(
+    private readonly getNow: () => number = Date.now,
+    maxTokens = 10,
+    refillRate = 10,
+    refillIntervalMs = 60000
+  ) {
+    this.maxTokens = maxTokens;
+    this.refillRate = refillRate;
+    this.refillInterval = refillIntervalMs;
+  }
 
   async consume(ip: string): Promise<{ allowed: boolean; retryAfter?: number }> {
     const now = this.getNow();

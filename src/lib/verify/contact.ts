@@ -1,8 +1,8 @@
 import { VerifyResult } from "./types";
-import { resolveCompany } from "./data/companies";
+import { resolveCompany, KNOWN_COMPANIES } from "./data/companies";
 import { getHostFromEmailOrUrl, isLookalike, isOfficial } from "./domain";
 
-const FREE_MAIL_PROVIDERS = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "proton.me", "rediffmail.com", "ymail.com"];
+export const FREE_MAIL_PROVIDERS = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "proton.me", "rediffmail.com", "ymail.com"];
 const PLACEHOLDER_DOMAINS = ["example.com", "example.org", "test.com", "localhost"];
 
 interface ContactClaims { company?: string; emails?: string[]; phones?: string[]; }
@@ -51,7 +51,7 @@ export function verifyContact(claims: ContactClaims): VerifyResult {
             status: "VERIFIED",
             evidence: `Email domain matches official domain for ${company.name}.`,
             sources: [{ label: "Official Site", url: company.careersUrl }],
-            nextAction: "Safe to contact.",
+            nextAction: "No contradicting evidence found. Still verify through the company's official site.",
             limitations: "Email spoofing is still technically possible, but rare in basic scams.",
             ruleId: "contact.email_official"
           };
@@ -84,6 +84,22 @@ export function verifyContact(claims: ContactClaims): VerifyResult {
       
       // If we don't know the company
       if (!company) {
+        // Check if it's a lookalike of ANY known company
+        for (const key of Object.keys(KNOWN_COMPANIES)) {
+          const comp = KNOWN_COMPANIES[key];
+          if (isLookalike(host, comp.officialDomains)) {
+            return {
+              claim: "contact",
+              status: "RISK",
+              evidence: `Email domain (${host}) is a lookalike of known brand (${comp.name}).`,
+              sources: [],
+              nextAction: "Do not contact. Likely a phishing attempt.",
+              limitations: "Similarity checks may have false positives.",
+              ruleId: "contact.email_lookalike"
+            };
+          }
+        }
+        
         return {
           claim: "contact",
           status: "UNCLEAR",

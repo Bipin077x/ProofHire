@@ -194,3 +194,30 @@ export function resolveCompanyFromDomains(domains: string[]): { company: Company
   }
   return { company: null };
 }
+
+export function inferCompanyFromText(text: string): { company: CompanyData | null } {
+  if (!text) return { company: null };
+  const lower = text.toLowerCase();
+  
+  // Find the longest matching name or alias to avoid partial short matches
+  let bestMatch: CompanyData | null = null;
+  let maxLen = 0;
+  
+  for (const key of Object.keys(KNOWN_COMPANIES)) {
+    const comp = KNOWN_COMPANIES[key];
+    const terms = [comp.name.toLowerCase(), ...comp.aliases.map(a => a.toLowerCase())];
+    for (const term of terms) {
+      if (term.length > 3 && lower.includes(term)) {
+        // use word boundaries for the term to avoid matching 'infy' inside 'infystuff'
+        const regex = new RegExp(`\\b${term}\\b`, 'i');
+        if (regex.test(lower)) {
+          if (term.length > maxLen) {
+            maxLen = term.length;
+            bestMatch = comp;
+          }
+        }
+      }
+    }
+  }
+  return { company: bestMatch };
+}

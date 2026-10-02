@@ -22,7 +22,7 @@ describe("calculateRollup", () => {
     ];
     const rollup = calculateRollup(results);
     expect(rollup.verdict).toBe("HIGH_RISK");
-    expect(rollup.reasons[0]).toBe("fee requested");
+    expect(rollup.reasons[0]).toBe("Payment: fee requested");
   });
 
   it("Rule 3: returns HIGH_RISK if >=2 RISK", () => {
@@ -155,5 +155,15 @@ describe("calculateRollup", () => {
       createRes("contact", "RISK"),
     ]);
     expect(resHigh.verdict).toBe("HIGH_RISK");
+  });
+
+  it("why string mentions at least one claim by name", () => {
+    const results: VerifyResult[] = [
+      { claim: "company", status: "UNCLEAR", evidence: "missing", ruleId: "test", sources: [] },
+      { claim: "payment", status: "VERIFIED", evidence: "ok", ruleId: "test", sources: [] }
+    ];
+    const rollup = calculateRollup(results);
+    expect(rollup.verdict).toBe("UNVERIFIED");
+    expect(rollup.reasons[0]).toMatch(/^(Company|Payment|Contact|Link|Role|Pressure|Reports):/i);
   });
 });

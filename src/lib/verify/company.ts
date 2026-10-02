@@ -2,7 +2,7 @@ import { VerifyResult } from "./types";
 import { resolveCompany } from "./data/companies";
 import { getHostFromEmailOrUrl, isOfficial } from "./domain";
 
-interface CompanyClaims { company?: string; emails?: string[]; urls?: string[]; }
+interface CompanyClaims { company?: string; companySource?: "named_in_post" | "inferred_from_domain"; emails?: string[]; urls?: string[]; }
 
 export function verifyCompany(claims: CompanyClaims): VerifyResult {
   const companyName = claims.company;
@@ -32,6 +32,8 @@ export function verifyCompany(claims: CompanyClaims): VerifyResult {
     };
   }
 
+  const isInferred = claims.companySource === "inferred_from_domain";
+
   // Known brand - check if emails or links prove affiliation
   const emails = claims.emails || [];
   const urls = claims.urls || [];
@@ -60,11 +62,11 @@ export function verifyCompany(claims: CompanyClaims): VerifyResult {
     return {
       claim: "company",
       status: "VERIFIED",
-      evidence: `Known brand (${company.name}) and contact/link matches official domains.`,
+      evidence: isInferred ? "Inferred from the official domain in the link; the post does not name the company." : `Known brand (${company.name}) and contact/link matches official domains.`,
       sources: [{ label: "Careers Site", url: company.careersUrl }],
-      nextAction: "Safe to engage.",
+      nextAction: "No contradicting evidence found. Still verify through the company's official site.",
       limitations: "A real brand doesn't guarantee the specific role exists.",
-      ruleId: "company.known_with_proof"
+      ruleId: isInferred ? "company.inferred" : "company.known_with_proof"
     };
   }
 

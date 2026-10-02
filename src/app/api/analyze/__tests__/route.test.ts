@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { handleAnalyzeRequest } from "../route";
 import { PrismaClient } from "@prisma/client";
 import { InMemoryRateLimiter } from "../../../../lib/rate-limit";
@@ -15,6 +15,15 @@ describe("Analyze API Route", () => {
     await db.scan.deleteMany();
     await db.report.deleteMany();
     await db.indicator.deleteMany();
+  });
+
+  afterEach(async () => {
+    const allScans = await db.scan.findMany();
+    const allClaims = await db.claim.findMany();
+    const allIndicators = await db.indicator.findMany();
+    expect(JSON.stringify(allScans)).not.toContain("9876543210");
+    expect(JSON.stringify(allClaims)).not.toContain("9876543210");
+    expect(JSON.stringify(allIndicators)).not.toContain("9876543210");
   });
 
   const fakeDeps = () => {
@@ -65,13 +74,6 @@ describe("Analyze API Route", () => {
     expect(scan?.redactedTranscript).toContain("[PHONE]");
     expect(scan?.redactedTranscript).not.toContain("9876543210");
 
-    // Query DB to assert no raw phone number exists in ANY row
-    const allScans = await db.scan.findMany();
-    const allClaims = await db.claim.findMany();
-    const allIndicators = await db.indicator.findMany();
-    expect(JSON.stringify(allScans)).not.toContain("9876543210");
-    expect(JSON.stringify(allClaims)).not.toContain("9876543210");
-    expect(JSON.stringify(allIndicators)).not.toContain("9876543210");
   });
 
   it("11th request in a minute -> 429 with Retry-After", async () => {
@@ -129,7 +131,7 @@ describe("Analyze API Route", () => {
     expect(res2.status).toBe(415);
   });
 
-  it("after the scam fixture is reported once, a second scan with the same UPI shows the reports RISK row", async () => {
+  it("after the scam fixture is reported once, a second scan with the same UPI shows the reports UNCLEAR row", async () => {
     const deps = fakeDeps();
     const text = "Pay via scam@upi. Scam job.";
     
@@ -144,6 +146,7 @@ describe("Analyze API Route", () => {
       body: JSON.stringify({ passportId: data1.passportId, indicatorType: "upi", note: "It's a scam" })
     });
     const repRes = await handleReport(reportReq);
+    if (repRes.status === 400) console.log("REPORT ERROR:", await repRes.clone().json());
     expect(repRes.status).toBe(200);
 
     // Scan 2
@@ -151,6 +154,109 @@ describe("Analyze API Route", () => {
     const data2 = await res2.json();
     
     const scan2 = await db.scan.findUnique({ where: { id: data2.passportId }, include: { claims: true } });
+    expect(scan2?.claims.some(c => c.key === "reports" && c.status === "UNCLEAR")).toBe(true);
+  });
+
+  it("3 distinct reports -> RISK", async () => {
+    const deps = fakeDeps();
+    const text = "Pay via scam3@upi. Scam job.";
+    
+    const res1 = await handleAnalyzeRequest(createReq({ text }), deps);
+    const data1 = await res1.json();
+    
+    for (let i = 1; i <= 3; i++) {
+      const repReq = new Request("http://localhost/api/report", {
+        method: "POST", headers: { "content-type": "application/json", "x-real-ip": `127.0.0.${i}` },
+        body: JSON.stringify({ passportId: data1.passportId, indicatorType: "upi", note: "scam" })
+      });
+      await handleReport(repReq);
+    }
+
+    const res2 = await handleAnalyzeRequest(createReq({ text }, "application/json", "127.0.1.1"), deps);
+    const data2 = await res2.json();
+    
+    const scan2 = await db.scan.findUnique({ where: { id: data2.passportId }, include: { claims: true } });
     expect(scan2?.claims.some(c => c.key === "reports" && c.status === "RISK")).toBe(true);
+  });
+
+  it("5 reports from same IP counts as 1, so UNCLEAR", async () => {
+    const deps = fakeDeps();
+    const text = "Pay via scam5@upi. Scam job.";
+    
+    const res1 = await handleAnalyzeRequest(createReq({ text }), deps);
+    const data1 = await res1.json();
+    
+    for (let i = 1; i <= 5; i++) {
+      const repReq = new Request("http://localhost/api/report", {
+        method: "POST", headers: { "content-type": "application/json", "x-real-ip": "127.0.0.99" },
+        body: JSON.stringify({ passportId: data1.passportId, indicatorType: "upi", note: "scam" })
+      });
+      await handleReport(repReq); // Only first works, rest 409
+    }
+
+    const res2 = await handleAnalyzeRequest(createReq({ text }, "application/json", "127.0.1.1"), deps);
+    const data2 = await res2.json();
+    
+    const scan2 = await db.scan.findUnique({ where: { id: data2.passportId }, include: { claims: true } });
+    expect(scan2?.claims.some(c => c.key === "reports" && c.status === "UNCLEAR")).toBe(true);
+  });
+
+  it("infosys.com reported 10 times -> not RISK, gmail.com reported 10 times -> not RISK", async () => {
+    const deps = fakeDeps();
+    const text = "Check out infosys.com or test@gmail.com";
+    
+    const res1 = await handleAnalyzeRequest(createReq({ text }), deps);
+    const data1 = await res1.json();
+    
+    for (let i = 1; i <= 10; i++) {
+      const req1 = new Request("http://localhost/api/report", { method: "POST", headers: { "content-type": "application/json", "x-real-ip": `10.0.0.${i}` }, body: JSON.stringify({ passportId: data1.passportId, indicatorType: "domain", note: "scam" }) });
+      await handleReport(req1);
+      
+      const req2 = new Request("http://localhost/api/report", { method: "POST", headers: { "content-type": "application/json", "x-real-ip": `10.0.0.${i}` }, body: JSON.stringify({ passportId: data1.passportId, indicatorType: "email", note: "scam" }) });
+      await handleReport(req2);
+    }
+
+    const res2 = await handleAnalyzeRequest(createReq({ text }, "application/json", "127.0.1.1"), deps);
+    const data2 = await res2.json();
+    
+    const scan2 = await db.scan.findUnique({ where: { id: data2.passportId }, include: { claims: true } });
+    expect(scan2?.claims.some(c => c.key === "reports" && (c.status === "RISK" || c.status === "UNCLEAR"))).toBe(false);
+  });
+
+  it("the 11th report from one IP in 24h -> rejected", async () => {
+    const deps = fakeDeps();
+    
+    // Need 11 DIFFERENT indicators to bypass the "Already reported" 409 limit for the same indicator.
+    for (let i = 1; i <= 11; i++) {
+      const txt = `scam${i}@upi.`;
+      const res = await handleAnalyzeRequest(createReq({ text: txt }, "application/json", `127.10.0.${i}`), deps);
+      const data = await res.json();
+      
+      const repReq = new Request("http://localhost/api/report", {
+        method: "POST", headers: { "content-type": "application/json", "x-real-ip": "127.0.10.10" },
+        body: JSON.stringify({ passportId: data.passportId, indicatorType: "upi", note: "scam" })
+      });
+      const repRes = await handleReport(repReq);
+      
+      if (i <= 10) {
+        expect(repRes.status).toBe(200);
+      } else {
+        expect(repRes.status).toBe(429); // rate limited!
+      }
+    }
+  });
+
+  it("missing ANTHROPIC_API_KEY -> regex-only passport with extractionMode 'regex-only'", async () => {
+    const deps = fakeDeps();
+    const originalEnv = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    
+    const req = createReq({ text: "Test text" });
+    const res = await handleAnalyzeRequest(req, deps);
+    const data = await res.json();
+    const scan = await db.scan.findUnique({ where: { id: data.passportId } });
+    expect(scan?.extractionMode).toBe("regex-only");
+
+    process.env.ANTHROPIC_API_KEY = originalEnv;
   });
 });

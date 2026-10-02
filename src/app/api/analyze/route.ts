@@ -3,6 +3,10 @@ import { z } from "zod";
 import { AnalyzeResult } from "../../../lib/analyze";
 import { RateLimiter, InMemoryRateLimiter } from "../../../lib/rate-limit";
 import { redactText, extractIndicatorsFromText, hashIndicator } from "../../../lib/redact";
+import { resolveCompanyFromDomains } from "../../../lib/verify/data/companies";
+import { FREE_MAIL_PROVIDERS } from "../../../lib/verify/contact";
+import { getHostFromEmailOrUrl } from "../../../lib/verify/domain";
+import { ClaimKey } from "../../../lib/verify/types";
 import { PrismaClient } from "@prisma/client";
 
 export const runtime = "nodejs";
@@ -125,39 +129,42 @@ async function storeAndReturn(result: AnalyzeResult, db: PrismaClient, rawText: 
   const extractionMode = result.extracted?.extractionMode || "regex-only";
   const indicators = extractIndicatorsFromText(rawText);
   
-  const scan = await db.scan.create({
-    data: {
-      verdict: result.rollup?.verdict || "UNVERIFIED",
-      why: result.rollup?.reasons.join("; ") || "",
-      extractionMode,
-      redactedTranscript: redacted,
-      indicatorHashes: JSON.stringify(indicators.map(i => hashIndicator(i))),
-      claims: {
-        create: (result.passport || []).map(p => ({
-          key: p.claim,
-          status: p.status,
-          evidence: p.evidence,
-          ruleId: p.ruleId,
-          nextAction: p.nextAction,
-          limitations: p.limitations,
-          sourcesJson: p.sources ? JSON.stringify(p.sources) : null
-        }))
-      }
-    }
-  });
-
-  let hasReports = false;
+  let hasReportsRISK = false;
+  let hasReportsUNCLEAR = false;
+  let reportsUnclearCount = 0;
 
   for (const ind of indicators) {
     const hash = hashIndicator(ind);
-    const existing = await db.indicator.findUnique({ where: { hash } });
+    const existing = await db.indicator.findUnique({ where: { hash }, include: { _count: { select: { Report: true } } } });
     if (existing) {
       await db.indicator.update({
         where: { hash },
         data: { scanCount: { increment: 1 }, lastSeen: new Date() }
       });
-      if (existing.reportCount > 0) {
-        hasReports = true;
+      
+      const rCount = existing._count.Report;
+      if (rCount > 0) {
+        let ignoreReports = false;
+        if (ind.type === "email" || ind.type === "domain") {
+          const host = getHostFromEmailOrUrl(ind.normalizedValue);
+          if (host) {
+            if (FREE_MAIL_PROVIDERS.includes(host)) {
+              ignoreReports = true;
+            } else {
+              const { company } = resolveCompanyFromDomains([host]);
+              if (company) ignoreReports = true;
+            }
+          }
+        }
+        
+        if (!ignoreReports) {
+          if (rCount >= 3) {
+            hasReportsRISK = true;
+          } else {
+            hasReportsUNCLEAR = true;
+            reportsUnclearCount = Math.max(reportsUnclearCount, rCount);
+          }
+        }
       }
     } else {
       await db.indicator.create({
@@ -170,19 +177,48 @@ async function storeAndReturn(result: AnalyzeResult, db: PrismaClient, rawText: 
     }
   }
 
-  if (hasReports) {
-    // Add "reports" to ClaimKey and make the rollup count it as RISK.
-    await db.claim.create({
-      data: {
-        scanId: scan.id,
-        key: "reports",
-        status: "RISK",
-        evidence: "Reported N time(s) by other users",
-        ruleId: "reports.known_indicator"
-      }
+  const passport = result.passport || [];
+  if (hasReportsRISK) {
+    passport.push({
+      claim: "reports" as ClaimKey,
+      status: "RISK",
+      evidence: "Reported 3 or more times by distinct users",
+      ruleId: "reports.known_indicator",
+      sources: []
     });
-    // We should also theoretically update the rollup logic here or let it be.
+  } else if (hasReportsUNCLEAR) {
+    passport.push({
+      claim: "reports" as ClaimKey,
+      status: "UNCLEAR",
+      evidence: `Reported ${reportsUnclearCount} time(s); below the confirmation threshold`,
+      ruleId: "reports.unconfirmed",
+      sources: []
+    });
   }
+
+  const { calculateRollup } = await import("../../../lib/rollup");
+  const finalRollup = calculateRollup(passport);
+
+  const scan = await db.scan.create({
+    data: {
+      verdict: finalRollup.verdict,
+      why: finalRollup.reasons.join("; "),
+      extractionMode,
+      redactedTranscript: redacted,
+      indicatorHashes: JSON.stringify(indicators.map(i => hashIndicator(i))),
+      claims: {
+        create: passport.map(p => ({
+          key: p.claim,
+          status: p.status,
+          evidence: p.evidence,
+          ruleId: p.ruleId,
+          nextAction: p.nextAction,
+          limitations: p.limitations,
+          sourcesJson: p.sources ? JSON.stringify(p.sources) : null
+        }))
+      }
+    }
+  });
 
   return NextResponse.json({ passportId: scan.id });
 }

@@ -60,6 +60,14 @@ describe("Company Verifier", () => {
       const result = verifyCompany({ company: "Alphabet", urls: ["https://google.com"] });
       expect(result.status).toBe("VERIFIED");
     });
+    
+    it("returns VERIFIED and proper evidence for inferred company", () => {
+      // @ts-ignore
+      const result = verifyCompany({ company: "Google", companySource: "inferred_from_domain", emails: ["hr@google.com"] });
+      expect(result.status).toBe("VERIFIED");
+      expect(result.ruleId).toBe("company.inferred");
+      expect(result.evidence).toBe("Inferred from the official domain in the link; the post does not name the company.");
+    });
   });
   
   describe("Edge cases", () => {

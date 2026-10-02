@@ -4,7 +4,7 @@ export const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 export const phoneRegex = /(?:(?:\+91|0)?[\s-]?)?[6-9](?:\d{9}|\d{4}[\s-]?\d{5}|\d{2}[\s-]?\d{3}[\s-]?\d{4})\b/g;
 
 // URL regex to match with or without http://, and short.link/apply
-export const urlRegex = /(?:https?:\/\/)?(?:www\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{2,6}\b[-a-zA-Z0-9()@:%_+.~#?&//=]*/gi;
+export const urlRegex = /(?:https?:\/\/)?(?:www\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b[-a-zA-Z0-9()@:%_+.~#?&//=]*/gi;
 
 // UPI ID usually doesn't have a dot after the @
 export const upiRegex = /\b[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z0-9]{2,64}\b(?!\.[a-zA-Z])/g;
@@ -25,6 +25,7 @@ export function extractPhones(text: string): string[] {
 export function extractUrls(text: string): string[] {
   const matches = text.match(urlRegex) || [];
   const emails = extractEmails(text);
+  const upis = extractUpi(text);
   const cleaned = matches.map((url) => {
     let cleanUrl = url.replace(/[.,;)]+$/, "");
     if (!/^https?:\/\//i.test(cleanUrl)) {
@@ -34,7 +35,12 @@ export function extractUrls(text: string): string[] {
   }).filter((url) => {
     // If the bare domain/path without http:// matches an email exactly, ignore it
     const bare = url.replace(/^https?:\/\//i, "");
-    return !emails.includes(bare);
+    if (emails.includes(bare)) return false;
+    
+    // Also ignore if the bare domain is actually part of an extracted UPI ID
+    if (upis.some(u => bare.includes(u))) return false;
+    
+    return true;
   });
   return Array.from(new Set(cleaned));
 }

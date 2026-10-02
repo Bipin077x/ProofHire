@@ -1,7 +1,7 @@
 import { VerifyResult } from "./types";
 import { safeResolve } from "../safe-fetch";
 import { isLookalike, isOfficial, registrableDomain } from "./domain";
-import { resolveCompany } from "./data/companies";
+import { resolveCompany, KNOWN_COMPANIES } from "./data/companies";
 
 const SHORTENERS = ["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly"];
 const FORM_CHAT_HOSTS = ["forms.gle", "docs.google.com", "wa.me", "chat.whatsapp.com", "t.me", "linktr.ee"];
@@ -46,7 +46,7 @@ export async function verifyLinks(claims: { company?: string; urls?: string[] })
   const urls = Array.from(new Set(claims.urls || [] as string[])).slice(0, 5);
   
   if (urls.length === 0) {
-    return { claim: "link", status: "NOT_VERIFIED", evidence: "No URLs provided.", ruleId: "link.missing", sources: [] };
+    return { claim: "link", status: "UNCLEAR", evidence: "No link provided.", ruleId: "link.missing", sources: [] };
   }
 
   let worstStatus = "VERIFIED";
@@ -61,6 +61,7 @@ export async function verifyLinks(claims: { company?: string; urls?: string[] })
   };
 
   const companyData = companyName ? resolveCompany(companyName).company : null;
+  const seenInitialHosts = new Set<string>();
 
   for (const urlStr of urls) {
     let parsedUrl: URL;
@@ -70,16 +71,57 @@ export async function verifyLinks(claims: { company?: string; urls?: string[] })
       continue;
     }
     
-    const initialHost = parsedUrl.hostname;
+    const initialHost = parsedUrl.hostname.toLowerCase();
     
-    // Resolve URL through safe-fetch
+    if (seenInitialHosts.has(initialHost)) continue;
+    seenInitialHosts.add(initialHost);
+
+    // OFFLINE HOSTNAME ANALYSIS
+    let isPunycode = initialHost.includes("xn--");
+    let isLook = false;
+    let lookalikeCompany = companyData?.name;
+    
+    if (companyData && companyData.officialDomains) {
+      isLook = isLookalike(initialHost, companyData.officialDomains);
+    } else if (!companyData) {
+      for (const key of Object.keys(KNOWN_COMPANIES)) {
+        const comp = KNOWN_COMPANIES[key];
+        if (isLookalike(initialHost, comp.officialDomains)) {
+          isLook = true;
+          lookalikeCompany = comp.name;
+          break;
+        }
+      }
+    }
+
+    if (isLook) {
+      updateWorst("RISK");
+      combinedEvidence.push(`${initialHost} (lookalike of ${lookalikeCompany})`);
+      ruleId = "link.lookalike";
+      continue; // do not downgrade on network fail
+    }
+
+    if (isPunycode) {
+      if (lookalikeCompany) { // implies it's claiming a known company or inferred one
+        updateWorst("RISK");
+        combinedEvidence.push(`${initialHost} (punycode domain targeting known brand)`);
+        ruleId = "link.punycode";
+      } else {
+        updateWorst("UNCLEAR");
+        combinedEvidence.push(`${initialHost} (punycode domain, check carefully)`);
+        if (worstStatus !== "RISK") ruleId = "link.punycode";
+      }
+      continue;
+    }
+
+    // RESOLVE URL
     const fetchRes = await safeResolve(urlStr as string);
     let finalHost = initialHost;
     let finalUrlStr = urlStr as string;
     
     if (fetchRes.finalUrl && !fetchRes.error && !fetchRes.blocked) {
       try {
-        finalHost = new URL(fetchRes.finalUrl).hostname;
+        finalHost = new URL(fetchRes.finalUrl).hostname.toLowerCase();
         finalUrlStr = fetchRes.finalUrl;
       } catch (e) {}
     }
@@ -89,14 +131,14 @@ export async function verifyLinks(claims: { company?: string; urls?: string[] })
     if (fetchRes.blocked) {
       updateWorst("RISK");
       combinedEvidence.push(`${chainStr} (blocked: link points to an internal/unsafe address)`);
-      ruleId = "link.blocked_unsafe";
+      if (ruleId !== "link.lookalike" && ruleId !== "link.punycode") ruleId = "link.blocked_unsafe";
       continue;
     }
 
     if (fetchRes.error) {
       updateWorst("UNCLEAR");
       combinedEvidence.push(`${chainStr} (destination hidden; could not be resolved)`);
-      if (ruleId !== "link.blocked_unsafe") ruleId = "link.unresolved";
+      if (ruleId !== "link.lookalike" && ruleId !== "link.punycode" && ruleId !== "link.blocked_unsafe") ruleId = "link.unresolved";
       continue;
     }
 
@@ -105,47 +147,41 @@ export async function verifyLinks(claims: { company?: string; urls?: string[] })
     if (SUSPICIOUS_TLDS.some(tld => finalHost.endsWith(tld))) {
       updateWorst("RISK");
       combinedEvidence.push(`${chainStr} (uses suspicious TLD)`);
-      if (ruleId !== "link.blocked_unsafe") ruleId = "link.suspicious_tld";
+      if (ruleId !== "link.lookalike" && ruleId !== "link.punycode" && ruleId !== "link.blocked_unsafe") ruleId = "link.suspicious_tld";
     }
 
     if (FORM_CHAT_HOSTS.some(h => finalHost === h || finalHost.endsWith("." + h))) {
       updateWorst("UNCLEAR");
       combinedEvidence.push(`${chainStr} (external form/chat host; not the company's own site)`);
-      if (worstStatus !== "RISK") ruleId = "link.form_chat_host";
+      if (ruleId !== "link.lookalike" && ruleId !== "link.punycode" && ruleId !== "link.blocked_unsafe" && ruleId !== "link.suspicious_tld") ruleId = "link.form_chat_host";
       continue;
     }
 
     let isOff = false;
-    let isLook = false;
 
     if (companyData && companyData.officialDomains) {
       isOff = isOfficial(finalHost, companyData.officialDomains);
-      isLook = isLookalike(finalHost, companyData.officialDomains);
       
       if (isOff) {
         // VERIFIED for this URL
         combinedEvidence.push(`${chainStr} (official domain)`);
         combinedSources.push({ url: finalUrlStr, label: finalHost });
-      } else if (isLook) {
-        updateWorst("RISK");
-        combinedEvidence.push(`${chainStr} (lookalike of the claimed brand)`);
-        if (ruleId !== "link.blocked_unsafe") ruleId = "link.lookalike";
       } else if (fetchRes.chain.length > 1 && SHORTENERS.some(s => initialHost === s || initialHost.endsWith("." + s))) {
         updateWorst("RISK");
         combinedEvidence.push(`${chainStr} (shortener resolved to unofficial domain)`);
-        if (ruleId !== "link.blocked_unsafe") ruleId = "link.shortener_unofficial";
+        if (ruleId !== "link.lookalike" && ruleId !== "link.punycode" && ruleId !== "link.blocked_unsafe" && ruleId !== "link.suspicious_tld") ruleId = "link.shortener_unofficial";
       } else {
         updateWorst("UNCLEAR");
         combinedEvidence.push(`${chainStr} (unofficial domain)`);
-        if (worstStatus !== "RISK") ruleId = "link.unofficial";
+        if (ruleId !== "link.lookalike" && ruleId !== "link.punycode" && ruleId !== "link.blocked_unsafe" && ruleId !== "link.suspicious_tld" && ruleId !== "link.shortener_unofficial") ruleId = "link.unofficial";
       }
     } else {
       updateWorst("UNCLEAR");
       combinedEvidence.push(`${chainStr} (company unknown, cannot verify if domain is official)`);
-      if (worstStatus !== "RISK") ruleId = "link.unknown_company";
+      if (ruleId !== "link.lookalike" && ruleId !== "link.punycode" && ruleId !== "link.blocked_unsafe" && ruleId !== "link.suspicious_tld" && ruleId !== "link.shortener_unofficial") ruleId = "link.unknown_company";
     }
 
-    // RDAP Domain Age (only if not official, or maybe always?)
+    // RDAP Domain Age (only if not official)
     if (regDom && !isOff && !FORM_CHAT_HOSTS.some(h => finalHost === h || finalHost.endsWith("." + h))) {
       const ageRes = await getDomainAge(regDom);
       if (ageRes.error) {
@@ -154,11 +190,11 @@ export async function verifyLinks(claims: { company?: string; urls?: string[] })
         if (ageRes.ageDays < 90) {
           updateWorst("RISK");
           combinedEvidence.push(`${chainStr} (registered ${Math.floor(ageRes.ageDays)} days ago)`);
-          if (ruleId !== "link.blocked_unsafe" && ruleId !== "link.lookalike") ruleId = "link.new_domain";
+          if (ruleId !== "link.lookalike" && ruleId !== "link.punycode" && ruleId !== "link.blocked_unsafe" && ruleId !== "link.suspicious_tld" && ruleId !== "link.shortener_unofficial") ruleId = "link.new_domain";
         } else if (ageRes.ageDays < 365) {
           updateWorst("UNCLEAR");
           combinedEvidence.push(`${chainStr} (registered ${Math.floor(ageRes.ageDays)} days ago)`);
-          if (worstStatus !== "RISK") ruleId = "link.recent_domain";
+          if (ruleId !== "link.lookalike" && ruleId !== "link.punycode" && ruleId !== "link.blocked_unsafe" && ruleId !== "link.suspicious_tld" && ruleId !== "link.shortener_unofficial" && ruleId !== "link.new_domain") ruleId = "link.recent_domain";
         }
       }
     }

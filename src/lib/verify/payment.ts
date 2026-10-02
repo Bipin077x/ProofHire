@@ -23,8 +23,8 @@ export function verifyPayment(claims: PaymentClaims): VerifyResult {
     };
   }
 
-  // Split into sentences first
-  const sentences = transcript.split(/[.!?\n]+/);
+  // Split into sentences first, keeping abbreviations and decimals intact
+  const sentences = transcript.split(/(?<!\b(?:rs|e\.g|i\.e|pvt|ltd|inc|mr|mrs|ms|dr|prof|vs|etc))\.(?=\s|$)|[!?\n]+/i);
 
   for (const sentence of sentences) {
     if (!sentence.trim()) continue;

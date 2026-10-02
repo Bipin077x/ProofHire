@@ -27,6 +27,20 @@ describe("Payment Verifier", () => {
     });
   });
 
+  describe("Sentence Splitting Regressions", () => {
+    it("does not break on UPI ids (hr.google@ybl)", () => {
+      const result = verifyPayment({ transcript: "Please pay a refundable registration fee of ₹500 via UPI to hr.google@ybl to confirm your slot." });
+      expect(result.status).toBe("RISK");
+      expect(result.evidence).toContain("hr.google@ybl");
+    });
+    
+    it("does not break on abbreviations like Rs.", () => {
+      const result = verifyPayment({ transcript: "Pay Rs. 999 to confirm." });
+      expect(result.status).toBe("RISK");
+      expect(result.evidence).toContain("Pay Rs. 999 to confirm");
+    });
+  });
+
   describe("UPI and edge cases", () => {
     it("flags UPI requests extracted by regex", () => {
       const result = verifyPayment({ transcript: "Send to name@okaxis", payment: { method: "name@okaxis" } });
