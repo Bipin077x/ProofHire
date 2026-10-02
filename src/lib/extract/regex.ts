@@ -15,8 +15,8 @@ export const feeWordingRegex = /(?:pay|payment|fee|charge|registration|deposit|s
 // Pressure tactics
 export const pressureRegex = /\b(?:urgent|immediately|limited\s+slots|today\s+only|act\s+fast|hurry|final\s+warning)\b/gi;
 
-// Roles (very basic)
-export const roleRegex = /\b(?:software\s+engineer|developer|data\s+entry|hr|manager|analyst|designer)\b/gi;
+// Roles (covers common Indian IT job titles)
+export const roleRegex = /\b(?:software\s+engineer|systems?\s+engineer|developer|data\s+entry|data\s+analyst|data\s+scientist|(?:hr|marketing|sales|product|project)\s+manager|manager|analyst|designer|consultant|intern|associate|executive|architect|team\s+lead|tech\s+lead)\b/gi;
 
 export function extractEmails(text: string): string[] {
   return Array.from(new Set(text.match(emailRegex) || []));
