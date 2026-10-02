@@ -67,173 +67,181 @@ function isPrivateIp(ip: string, family: number): boolean {
   return true;
 }
 
-export async function safeResolve(urlStr: string, opts?: any): Promise<SafeFetchResult> {
-  const chain: { url: string; status: number }[] = [];
-  let currentUrlStr = urlStr;
-  let bodyText: string | undefined;
-  
-  const overallAc = new AbortController();
-  const overallTimeout = setTimeout(() => overallAc.abort(), 12000);
+export interface SafeResolverOptions {
+  allowedPorts: number[];
+  dnsLookup: (hostname: string, options: any) => Promise<any>;
+  allowPrivateForTests?: boolean;
+}
 
-  try {
-    for (let hop = 0; hop < 5; hop++) {
-      let parsedUrl: URL;
-      try {
-        parsedUrl = new URL(currentUrlStr);
-      } catch (e) {
-        return { finalUrl: currentUrlStr, chain, error: "invalid_url" };
-      }
+const defaultOptions: SafeResolverOptions = {
+  allowedPorts: [80, 443],
+  dnsLookup: dns.promises.lookup
+};
 
-      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-        return { finalUrl: currentUrlStr, chain, blocked: { reason: "unsupported_protocol", url: currentUrlStr } };
-      }
-      if (parsedUrl.username || parsedUrl.password) {
-        return { finalUrl: currentUrlStr, chain, blocked: { reason: "credentials_in_url", url: currentUrlStr } };
-      }
-      if (parsedUrl.port !== "" && parsedUrl.port !== "80" && parsedUrl.port !== "443" && process.env.NODE_ENV !== "test") {
-        return { finalUrl: currentUrlStr, chain, blocked: { reason: "blocked_port", url: currentUrlStr } };
-      }
-      
-      const host = parsedUrl.hostname;
-      
-      const matchHost = currentUrlStr.replace(/^https?:\/\//i, '').split('/')[0].split(':')[0];
-      // Prevent non-canonical IP literals
-      if (/^0x/i.test(matchHost) || /^0\d/.test(matchHost) || /^\d+$/.test(matchHost) || (matchHost.match(/\./g) && matchHost.match(/\./g)!.length < 3 && net.isIPv4(host))) {
-        // e.g. 127.1 or 2130706433 or 0x7f000001
-        return { finalUrl: currentUrlStr, chain, blocked: { reason: "non_canonical_ip", url: currentUrlStr } };
-      }
+export function createSafeResolver(config: SafeResolverOptions) {
+  return async function safeResolve(urlStr: string, opts?: any): Promise<SafeFetchResult> {
+    const chain: { url: string; status: number }[] = [];
+    let currentUrlStr = urlStr;
+    let bodyText: string | undefined;
+    
+    const overallAc = new AbortController();
+    const overallTimeout = setTimeout(() => overallAc.abort(), 12000);
 
-      let address: string;
-      let family: number;
-      let lookupCalled = 0;
+    try {
+      for (let hop = 0; hop < 5; hop++) {
+        let parsedUrl: URL;
+        try {
+          parsedUrl = new URL(currentUrlStr);
+        } catch (e) {
+          return { finalUrl: currentUrlStr, chain, error: "invalid_url" };
+        }
 
-      try {
-        const lookupRes = await dns.promises.lookup(host, { all: true });
-        if (lookupRes.length === 0) throw new Error("no_dns");
-        // Check ALL returned IPs to prevent DNS rebinding where 1 is public, 1 is private
-        for (const res of lookupRes) {
-          if (isPrivateIp(res.address, res.family)) {
+        if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+          return { finalUrl: currentUrlStr, chain, blocked: { reason: "unsupported_protocol", url: currentUrlStr } };
+        }
+        if (parsedUrl.username || parsedUrl.password) {
+          return { finalUrl: currentUrlStr, chain, blocked: { reason: "credentials_in_url", url: currentUrlStr } };
+        }
+        
+        let portNum = parsedUrl.port ? parseInt(parsedUrl.port, 10) : (parsedUrl.protocol === "https:" ? 443 : 80);
+        if (!config.allowedPorts.includes(portNum)) {
+          return { finalUrl: currentUrlStr, chain, blocked: { reason: "blocked_port", url: currentUrlStr } };
+        }
+        
+        const host = parsedUrl.hostname;
+        
+        const matchMatch = currentUrlStr.match(/^https?:\/\/(?:[^@\/]+@)?(\[[^\]]+\]|[^:\/]+)/i);
+        const matchHost = matchMatch ? matchMatch[1] : host;
+        // Prevent non-canonical IP literals
+        if (/^0x/i.test(matchHost) || /^0\d/.test(matchHost) || /^\d+$/.test(matchHost) || (matchHost.match(/\./g) && matchHost.match(/\./g)!.length < 3 && net.isIPv4(host))) {
+          return { finalUrl: currentUrlStr, chain, blocked: { reason: "non_canonical_ip", url: currentUrlStr } };
+        }
+
+        const matchHostStr = matchHost.replace(/\[|\]/g, "");
+        if (net.isIP(matchHostStr)) {
+          if (!config.allowPrivateForTests && isPrivateIp(matchHostStr, net.isIPv4(matchHostStr) ? 4 : 6)) {
             return { finalUrl: currentUrlStr, chain, blocked: { reason: "private_ip", url: currentUrlStr } };
           }
         }
-        address = lookupRes[0].address;
-        family = lookupRes[0].family;
-      } catch (e) {
-        return { finalUrl: currentUrlStr, chain, error: "dns_lookup_failed" };
-      }
 
-      // Create an agent that pins the IP
-      const agent = new Agent({
-        connect: {
-          lookup: (hostname, options, callback) => {
-            lookupCalled++;
-            // We ensure lookup is only called once per hop, and returns the pre-validated IP
-            callback(null, [{ address, family }]);
-          }
-        }
-      });
+        let validationError: string | undefined;
+        let validationBlockedReason: string | undefined;
+        let lookupCalled = 0;
 
-      const hopAc = new AbortController();
-      const hopTimeout = setTimeout(() => hopAc.abort(), 5000);
-      
-      // Link overall and hop abort controllers manually
-      const onOverallAbort = () => hopAc.abort();
-      overallAc.signal.addEventListener("abort", onOverallAbort);
-
-      let response: any;
-      try {
-        // Try HEAD first
-        response = await request(parsedUrl, {
-          method: "HEAD",
-          dispatcher: agent,
-          signal: hopAc.signal,
-          headers: {
-            "User-Agent": "ProofHireBot/1.0 (+contact-url)"
+        const agent = new Agent({
+          connect: {
+            lookup: (hostname, options, callback) => {
+              lookupCalled++;
+              config.dnsLookup(hostname, { all: true }).then((lookupRes: any) => {
+                if (lookupRes.length === 0) {
+                  validationError = "dns_lookup_failed";
+                  return callback(new Error("no_dns"), []);
+                }
+                for (const res of lookupRes) {
+                  if (!config.allowPrivateForTests && isPrivateIp(res.address, res.family)) {
+                    validationBlockedReason = "private_ip";
+                    return callback(new Error("private_ip"), []);
+                  }
+                }
+                callback(null, [{ address: lookupRes[0].address, family: lookupRes[0].family }]);
+              }).catch(() => {
+                validationError = "dns_lookup_failed";
+                callback(new Error("dns_lookup_failed"), []);
+              });
+            }
           }
         });
-        
-        if ((response.statusCode === 405 || response.statusCode === 501 || !response.headers.location) && (response.statusCode >= 200 && response.statusCode < 300 || response.statusCode >= 400)) {
-           // If HEAD fails or gives no location when it should, we might need GET. But let's only do GET if we suspect it's a redirect that needs GET, or we just abort. The spec says:
-           // "Method HEAD first. If it returns 405/501 or no Location, retry with GET but do NOT read more than 64KB and then abort the body."
-           if (response.statusCode === 405 || response.statusCode === 501 || response.statusCode >= 300) {
-             // Let's just always fallback to GET if it's 405/501, or if it's 3xx without location? Actually 3xx without location is weird, we should GET to see if location appears.
-             // The body is aborted.
-           }
-        }
-      } catch (e: any) {
-        clearTimeout(hopTimeout);
-        overallAc.signal.removeEventListener("abort", onOverallAbort);
-        return { finalUrl: currentUrlStr, chain, error: e.name === "AbortError" ? "timeout" : "network_error" };
-      }
 
-      // If we need to retry with GET
-      if (response.statusCode === 405 || response.statusCode === 501 || (response.statusCode >= 300 && response.statusCode < 400 && !response.headers.location)) {
+        const hopAc = new AbortController();
+        const hopTimeout = setTimeout(() => hopAc.abort(), 5000);
+        
+        const onOverallAbort = () => hopAc.abort();
+        overallAc.signal.addEventListener("abort", onOverallAbort);
+
+        let response: any;
         try {
           response = await request(parsedUrl, {
-            method: opts?.method || "GET",
+            method: "HEAD",
             dispatcher: agent,
             signal: hopAc.signal,
             headers: {
-              "User-Agent": "ProofHireBot/1.0 (+contact-url)",
-              ...(opts?.headers || {})
+              "User-Agent": "ProofHireBot/1.0 (+contact-url)"
             }
           });
-          // Abort body safely
-          let bytesRead = 0;
-          const chunks = [];
-          for await (const chunk of response.body) {
-            bytesRead += chunk.length;
-            if (opts?.readBody) {
-              chunks.push(chunk);
-              if (bytesRead > 1048576) { // 1MB hard cap
-                 response.body.destroy();
-                 break;
+        } catch (e: any) {
+          clearTimeout(hopTimeout);
+          overallAc.signal.removeEventListener("abort", onOverallAbort);
+          if (validationBlockedReason) {
+            return { finalUrl: currentUrlStr, chain, blocked: { reason: validationBlockedReason, url: currentUrlStr } };
+          }
+          if (validationError) {
+            return { finalUrl: currentUrlStr, chain, error: validationError };
+          }
+          return { finalUrl: currentUrlStr, chain, error: e.name === "AbortError" ? "timeout" : "network_error" };
+        }
+
+        if (response.statusCode === 405 || response.statusCode === 501 || (response.statusCode >= 300 && response.statusCode < 400 && !response.headers.location)) {
+          try {
+            response = await request(parsedUrl, {
+              method: opts?.method || "GET",
+              dispatcher: agent,
+              signal: hopAc.signal,
+              headers: {
+                "User-Agent": "ProofHireBot/1.0 (+contact-url)",
+                ...(opts?.headers || {})
               }
-            } else {
-              if (bytesRead > 65536) { // 64KB
-                response.body.destroy();
-                break;
+            });
+            let bytesRead = 0;
+            const chunks = [];
+            for await (const chunk of response.body) {
+              bytesRead += chunk.length;
+              if (opts?.readBody) {
+                chunks.push(chunk);
+                if (bytesRead > 1048576) {
+                   response.body.destroy();
+                   break;
+                }
+              } else {
+                if (bytesRead > 65536) {
+                  response.body.destroy();
+                  break;
+                }
               }
             }
+            if (opts?.readBody && chunks.length > 0) {
+              bodyText = Buffer.concat(chunks).toString("utf-8");
+            }
+          } catch (e: any) {
+             clearTimeout(hopTimeout);
+             overallAc.signal.removeEventListener("abort", onOverallAbort);
+             return { finalUrl: currentUrlStr, chain, error: e.name === "AbortError" ? "timeout" : "network_error" };
           }
-          if (opts?.readBody && chunks.length > 0) {
-            bodyText = Buffer.concat(chunks).toString("utf-8");
-          }
-        } catch (e: any) {
-           clearTimeout(hopTimeout);
-           overallAc.signal.removeEventListener("abort", onOverallAbort);
-           return { finalUrl: currentUrlStr, chain, error: e.name === "AbortError" ? "timeout" : "network_error" };
+        } else {
+          response.body.dump();
         }
-      } else {
-        // Just consume the HEAD body
-        response.body.dump();
+        
+        clearTimeout(hopTimeout);
+        overallAc.signal.removeEventListener("abort", onOverallAbort);
+
+        chain.push({ url: currentUrlStr, status: response.statusCode });
+
+        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          let loc = Array.isArray(response.headers.location) ? response.headers.location[0] : response.headers.location;
+          currentUrlStr = new URL(loc, currentUrlStr).toString();
+        } else {
+          clearTimeout(overallTimeout);
+          return { finalUrl: currentUrlStr, chain, text: bodyText };
+        }
       }
       
-      clearTimeout(hopTimeout);
-      overallAc.signal.removeEventListener("abort", onOverallAbort);
+      clearTimeout(overallTimeout);
+      return { finalUrl: currentUrlStr, chain, error: "too_many_redirects", text: bodyText };
       
-      // At this point we connected and got headers. We should assert lookup was called exactly once by undici.
-      if (lookupCalled !== 1 && lookupCalled !== 0) { // 0 if it was IP literal
-        // but wait, if it's an IP literal, dns lookup might not be called in undici connect.
-      }
-
-      chain.push({ url: currentUrlStr, status: response.statusCode });
-
-      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-        let loc = Array.isArray(response.headers.location) ? response.headers.location[0] : response.headers.location;
-        currentUrlStr = new URL(loc, currentUrlStr).toString();
-      } else {
-        // Not a redirect, we reached the end
-        clearTimeout(overallTimeout);
-        return { finalUrl: currentUrlStr, chain, text: bodyText };
-      }
+    } catch (e: any) {
+      clearTimeout(overallTimeout);
+      return { finalUrl: currentUrlStr, chain, error: "unexpected_error", text: bodyText };
     }
-    
-    clearTimeout(overallTimeout);
-    return { finalUrl: currentUrlStr, chain, error: "too_many_redirects", text: bodyText };
-    
-  } catch (e: any) {
-    clearTimeout(overallTimeout);
-    return { finalUrl: currentUrlStr, chain, error: "unexpected_error", text: bodyText };
-  }
+  };
 }
+
+export const safeResolve = createSafeResolver(defaultOptions);

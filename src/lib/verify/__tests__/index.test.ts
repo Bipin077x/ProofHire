@@ -24,6 +24,24 @@ describe("runAllVerifiers", () => {
     const results = await runAllVerifiers({ company: "Google" }, { searchProvider: new MockProvider() });
     const linkResult = results.find(r => r.claim === "link");
     expect(linkResult?.status).toBe("UNCLEAR");
+    expect(linkResult?.ruleId).toBe("system.check_failed");
+  });
+
+  it("handles hanging verifiers using fake timers", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(link, "verifyLinks").mockImplementation(() => new Promise(() => {})); // Hangs forever
+    
+    const runPromise = runAllVerifiers({ company: "Google" }, { searchProvider: new MockProvider() });
+    
+    // Advance timers by 15s to trigger timeout
+    vi.advanceTimersByTime(15000);
+    
+    const results = await runPromise;
+    const linkResult = results.find(r => r.claim === "link");
+    expect(linkResult?.status).toBe("UNCLEAR");
+    expect(linkResult?.ruleId).toBe("system.check_failed");
     expect(linkResult?.evidence).toBe("check failed");
+    
+    vi.useRealTimers();
   });
 });

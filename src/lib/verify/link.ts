@@ -149,7 +149,7 @@ export async function verifyLinks(claims: any): Promise<VerifyResult> {
     if (regDom && !isOff && !FORM_CHAT_HOSTS.some(h => finalHost === h || finalHost.endsWith("." + h))) {
       const ageRes = await getDomainAge(regDom);
       if (ageRes.error) {
-        limitations = "RDAP lookup failed: " + ageRes.error;
+        limitations = "Could not verify domain age: " + ageRes.error;
       } else if (ageRes.ageDays !== undefined) {
         if (ageRes.ageDays < 90) {
           updateWorst("RISK");

@@ -37,7 +37,7 @@ export async function runAllVerifiers(claims: any, deps: VerificationDeps): Prom
       claim: claimName as any,
       status: "UNCLEAR",
       evidence: "check failed",
-      ruleId: `${claimName}.failed`,
+      ruleId: "system.check_failed",
       limitations: res.reason?.message || "Unknown error",
       sources: []
     };

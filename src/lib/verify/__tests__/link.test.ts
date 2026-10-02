@@ -145,5 +145,16 @@ describe("Link Verifier", () => {
       expect(result.status).toBe("UNCLEAR");
       expect(result.ruleId).toBe("link.unknown_company");
     });
+    
+    it("handles RDAP failure without returning RISK (limitation noted)", async () => {
+      vi.mocked(safefetch.safeResolve).mockImplementation(async (url) => {
+        if (url.includes("rdap.org")) return { finalUrl: url, chain: [], error: "network_error" };
+        return { finalUrl: url, chain: [{ url, status: 200 }] };
+      });
+      
+      const result = await verifyLinks({ company: "UnknownStartup2", urls: ["https://rdap-fail.com"] });
+      expect(result.status).not.toBe("RISK");
+      expect(result.limitations || "").toContain("Could not verify domain age");
+    });
   });
 });
