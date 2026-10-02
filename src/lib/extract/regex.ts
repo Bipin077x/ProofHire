@@ -48,15 +48,20 @@ export function extractUpi(text: string): string[] {
 
 export function extractFeeWording(text: string): string[] {
   const matches = text.match(feeWordingRegex) || [];
+  const sentences = text.split(/[.!?\n]+/).map(s => s.trim().toLowerCase());
+  
   const filtered = matches.filter((m) => {
-    const lower = text.toLowerCase();
+    const mLower = m.toLowerCase();
     
-    // Ignore negative phrases by checking the text around it, or just generally in the transcript if it's very explicit
-    if (lower.includes("no fee") || lower.includes("no fees") || lower.includes("never ask candidates for money") || lower.includes("free of charge")) {
+    // Find which sentence this match belongs to
+    const matchingSentence = sentences.find(s => s.includes(mLower));
+    const context = matchingSentence || text.toLowerCase();
+    
+    // Ignore negative phrases in the SAME sentence
+    if (context.includes("no fee") || context.includes("no fees") || context.includes("never ask candidates for money") || context.includes("free of charge")) {
       return false;
     }
     
-    const mLower = m.toLowerCase();
     // Ignore stipends / salaries
     if (mLower.includes("stipend") || mLower.includes("salary") || mLower.includes("lpa") || mLower.match(/\b(?:month|yr|year|week|day|hr|hour)\b/)) {
       return false;

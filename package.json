@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "extract": "tsx scripts/extract.ts",
+    "safefetch": "tsx scripts/safefetch.ts",
     "lint": "eslint .",
     "test": "vitest"
   },
@@ -16,6 +17,7 @@
     "next": "14.x",
     "react": "18.x",
     "react-dom": "18.x",
+    "undici": "^8.11.2",
     "zod": "^3.22.4"
   },
   "devDependencies": {

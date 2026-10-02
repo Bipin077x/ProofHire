@@ -11,7 +11,7 @@ export interface VerifyResult {
   status: Status;
   evidence: string;
   sources: Source[];
-  nextAction: string;
-  limitations: string;
+  nextAction?: string;
+  limitations?: string;
   ruleId: string;
 }

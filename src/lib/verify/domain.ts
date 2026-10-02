@@ -77,8 +77,14 @@ export function isLookalike(host: string, officialDomains: string[]): boolean {
     
     // Digit substitutions or small typos (edit distance <= 2)
     // Only apply if the name is reasonably long
-    if (offName.length > 4 && levenshtein(hostName, offName) <= 2) {
-      return true;
+    if (offName.length > 4) {
+      if (levenshtein(hostName, offName) <= 2) return true;
+      
+      // Also check parts split by hyphens (e.g. g00gle-careers -> g00gle and careers)
+      const parts = hostName.split("-");
+      for (const part of parts) {
+        if (levenshtein(part, offName) <= 2) return true;
+      }
     }
   }
   return false;

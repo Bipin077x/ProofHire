@@ -3,6 +3,7 @@ import { resolveCompany } from "./data/companies";
 import { getHostFromEmailOrUrl, isLookalike, isOfficial } from "./domain";
 
 const FREE_MAIL_PROVIDERS = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "proton.me", "rediffmail.com", "ymail.com"];
+const PLACEHOLDER_DOMAINS = ["example.com", "example.org", "test.com", "localhost"];
 
 export function verifyContact(claims: any): VerifyResult {
   const companyName = claims.company || "";
@@ -29,6 +30,18 @@ export function verifyContact(claims: any): VerifyResult {
     const host = getHostFromEmailOrUrl(email);
     
     if (host) {
+      if (PLACEHOLDER_DOMAINS.includes(host) || host.endsWith(".invalid")) {
+        return {
+          claim: "contact",
+          status: "UNCLEAR",
+          evidence: "placeholder domain",
+          sources: [],
+          nextAction: "Provide a real email address.",
+          limitations: "Placeholder domain provided.",
+          ruleId: "contact.placeholder"
+        };
+      }
+      
       if (company && company.officialDomains) {
         if (isOfficial(host, company.officialDomains)) {
           return {
