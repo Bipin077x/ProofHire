@@ -2,7 +2,9 @@ import { VerifyResult } from "./types";
 import { resolveCompany } from "./data/companies";
 import { getHostFromEmailOrUrl, isOfficial } from "./domain";
 
-export function verifyCompany(claims: any): VerifyResult {
+interface CompanyClaims { company?: string; emails?: string[]; urls?: string[]; }
+
+export function verifyCompany(claims: CompanyClaims): VerifyResult {
   const companyName = claims.company;
   if (!companyName) {
     return {

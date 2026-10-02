@@ -22,3 +22,5 @@ export const ClaimsSchema = z.object({
   confidence: z.record(z.number()).optional(),
   extractionMode: z.enum(["regex-only", "llm+regex"]).optional(),
 });
+
+export type ClaimsInput = z.infer<typeof ClaimsSchema>;

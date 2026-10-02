@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { verifyRole, SearchProvider } from "../role";
 
 class FakeProvider implements SearchProvider {
-  constructor(private results: any[], private error?: string) {}
+  constructor(private results: { title: string; url: string; snippet: string }[], private error?: string) {}
   async search(query: string) {
     if (this.error) throw new Error(this.error);
     return this.results;

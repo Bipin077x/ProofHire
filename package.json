@@ -6,10 +6,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "db:migrate": "prisma migrate dev --name init",
     "extract": "tsx scripts/extract.ts",
     "safefetch": "tsx scripts/safefetch.ts",
+    "analyze": "tsx scripts/analyze.ts",
     "lint": "eslint .",
-    "test": "vitest"
+    "test": "vitest",
+    "testcount": "tsx scripts/testcount.ts",
+    "posttest": "npm run testcount"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
@@ -24,6 +28,8 @@
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^20.8.0",
     "@types/react": "^18.2.0",
+    "@typescript-eslint/eslint-plugin": "^8.71.0",
+    "@typescript-eslint/parser": "^8.71.0",
     "autoprefixer": "^10.4.0",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.35",

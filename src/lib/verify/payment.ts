@@ -2,10 +2,14 @@ import { VerifyResult } from "./types";
 
 const NEGATIONS = ["no", "not", "never", "without", "free of", "zero"];
 const FEE_PHRASES = ["fee", "charge", "deposit", "money", "kit charge", "registration"];
-const PAY_IMPERATIVES = ["pay", "send", "transfer", "deposit", "remit", "scan", "upi"];
-const AMOUNT_FEE_REGEX = /(?:₹|rs\.?|inr)\s*[\d,]+|\b(?:fee|charge)\b/i;
+const AMOUNT_FEE_REGEX = /(?:₹|rs\.?|inr)\s*[\d,]+|\b(?:fee|charge|confirm seat|book)\b/i;
 
-export function verifyPayment(claims: any): VerifyResult {
+interface PaymentClaims {
+  transcript?: string;
+  payment?: { requested?: boolean; method?: string; wording?: string };
+}
+
+export function verifyPayment(claims: PaymentClaims): VerifyResult {
   const transcript = claims.transcript || "";
   
   if (!transcript.trim()) {

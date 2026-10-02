@@ -1,47 +1,51 @@
 import { VerifyResult } from "../verify/types";
 
 export interface RollupResult {
-  riskLevel: "HIGH" | "CAUTION" | "UNVERIFIED" | "NO_FLAGS";
+  verdict: "HIGH_RISK" | "CAUTION" | "UNVERIFIED" | "NO_RED_FLAGS_FOUND";
   reasons: string[];
 }
 
 export function calculateRollup(results: VerifyResult[]): RollupResult {
-  const riskResults = results.filter(r => r.status === "RISK");
-  if (riskResults.length > 0) {
-    return {
-      riskLevel: "HIGH",
-      reasons: riskResults.map(r => r.evidence)
-    };
+  // Rule 1: transcriptEmpty -> UNVERIFIED
+  const paymentRes = results.find(r => r.claim === "payment");
+  if (paymentRes?.ruleId === "payment.missing_text") {
+    return { verdict: "UNVERIFIED", reasons: ["No transcript provided to analyze."] };
   }
 
-  const companyResult = results.find(r => r.claim === "company");
-  const contactResult = results.find(r => r.claim === "contact");
-  
-  const companyUnverified = !companyResult || companyResult.status === "NOT_VERIFIED" || companyResult.status === "UNCLEAR";
-  const contactUnverified = !contactResult || contactResult.status === "NOT_VERIFIED" || contactResult.status === "UNCLEAR";
-  
-  const mismatchOrUnresolved = results.some(r => r.status === "UNCLEAR" && (r.ruleId.endsWith(".mismatch") || r.ruleId.endsWith(".unresolved")));
-
-  if ((companyUnverified && contactUnverified) || mismatchOrUnresolved) {
-    const reasons: string[] = [];
-    if (companyUnverified && contactUnverified) reasons.push("Core identity (company and contact) could not be verified.");
-    if (mismatchOrUnresolved) reasons.push("There are unresolved claims or mismatches in the provided data.");
-    return {
-      riskLevel: "CAUTION",
-      reasons
-    };
+  // Rule 5: any system.check_failed -> UNVERIFIED
+  if (results.some(r => r.ruleId === "system.check_failed")) {
+    return { verdict: "UNVERIFIED", reasons: ["One or more verification checks failed to execute."] };
   }
 
-  const notVerifiedCount = results.filter(r => r.status === "NOT_VERIFIED").length;
-  if (notVerifiedCount >= 3) {
-    return {
-      riskLevel: "UNVERIFIED",
-      reasons: ["Too many claims lacked sufficient evidence for verification."]
-    };
+  // Count RISK across core claims
+  const coreRiskResults = results.filter(r => r.status === "RISK" && r.claim !== "pressure");
+
+  // Rule 2: payment RISK -> HIGH_RISK
+  if (paymentRes?.status === "RISK") {
+    return { verdict: "HIGH_RISK", reasons: [paymentRes.evidence] };
   }
 
-  return {
-    riskLevel: "NO_FLAGS",
-    reasons: ["No explicit scam indicators or high-risk mismatches were detected."]
-  };
+  // Rule 3: >= 2 RISK among core claims -> HIGH_RISK
+  if (coreRiskResults.length >= 2) {
+    return { verdict: "HIGH_RISK", reasons: coreRiskResults.map(r => r.evidence) };
+  }
+
+  // Rule 4: exactly 1 RISK (which is not payment, since that would hit Rule 2) -> CAUTION
+  if (coreRiskResults.length === 1) {
+    return { verdict: "CAUTION", reasons: [coreRiskResults[0].evidence] };
+  }
+
+  // Rule 6: NO_RED_FLAGS_FOUND only if payment, company, contact AND link are all VERIFIED
+  const reqClaims = ["payment", "company", "contact", "link"];
+  const allReqVerified = reqClaims.every(c => {
+    const res = results.find(r => r.claim === c);
+    return res && res.status === "VERIFIED";
+  });
+
+  if (allReqVerified) {
+    return { verdict: "NO_RED_FLAGS_FOUND", reasons: ["No explicit red flags were found in the provided claims."] };
+  }
+
+  // fallback
+  return { verdict: "UNVERIFIED", reasons: ["Could not independently verify all core claims."] };
 }

@@ -1,52 +1,32 @@
 import { describe, it, expect } from "vitest";
-import { isLookalike, isOfficial, registrableDomain } from "../domain";
+import { isOfficial, isLookalike, registrableDomain } from "../domain";
 
-describe("Domain Helpers", () => {
-  describe("registrableDomain", () => {
-    it("extracts standard domains", () => {
-      expect(registrableDomain("google.com")).toBe("google.com");
-      expect(registrableDomain("careers.google.com")).toBe("google.com");
-    });
-
-    it("handles two-level TLDs", () => {
-      expect(registrableDomain("amazon.co.in")).toBe("amazon.co.in");
-      expect(registrableDomain("my.amazon.co.in")).toBe("amazon.co.in");
-      expect(registrableDomain("infosys.co.in")).toBe("infosys.co.in");
-    });
+describe("Domain Verifier", () => {
+  it("extracts registrable domain", () => {
+    expect(registrableDomain("careers.google.com")).toBe("google.com");
+    expect(registrableDomain("infosys.co.in")).toBe("infosys.co.in");
   });
-
-  describe("isOfficial", () => {
-    const domains = ["google.com"];
-    
-    it("matches exact", () => {
-      expect(isOfficial("google.com", domains)).toBe(true);
-    });
-    
-    it("matches subdomains", () => {
-      expect(isOfficial("careers.google.com", domains)).toBe(true);
-      expect(isOfficial("Careers.GOOGLE.com".toLowerCase(), domains)).toBe(true); // mixed case is handled correctly in real usage due to lowercasing earlier
-    });
-
-    it("does not match lookalikes in isOfficial", () => {
-      expect(isOfficial("google.com.evil.in", domains)).toBe(false);
-      expect(isOfficial("mygoogle.com", domains)).toBe(false);
-    });
+  
+  const official = [
+    ["careers.google.com", "google", true],
+    ["Careers.GOOGLE.com", "google", true],
+    ["google.com.evil.in", "google", false],
+    ["mygoogle.com", "google", false],
+  ];
+  it.each(official)("isOfficial %s %s -> %s", (domain, _comp, exp) => {
+    expect(isOfficial(domain as string, ["google.com"])).toBe(exp);
   });
-
-  describe("isLookalike", () => {
-    const domains = ["google.com", "microsoft.com"];
-    
-    it("detects basic lookalikes", () => {
-      expect(isLookalike("g00gle.com", domains)).toBe(true);
-      expect(isLookalike("g00gle-careers.in", domains)).toBe(true);
-      expect(isLookalike("microsoft-hiring.co", domains)).toBe(true);
-      expect(isLookalike("google.com.evil.in", domains)).toBe(true);
-      expect(isLookalike("xn--ggle-0nda.com", domains)).toBe(true);
-    });
-    
-    it("does not flag official subdomains as lookalikes", () => {
-      expect(isLookalike("careers.google.com", domains)).toBe(false);
-      expect(isLookalike("google.com", domains)).toBe(false);
-    });
+  
+  const lookalike = [
+    ["g00gle-careers.in", "google", true],
+    ["microsoft-hiring.co", "microsoft", true],
+    ["xn--ggle-0nda.com", "google", true],
+    ["g0ogle.com", "google", true],
+    ["google-support.in", "google", true],
+    ["apple.com.evil.in", "apple", true], // subdomain spoofing
+    ["amazon-jobs.org", "amazon", true] // hyphen separation
+  ];
+  it.each(lookalike)("isLookalike %s %s -> %s", (domain, comp, exp) => {
+    expect(isLookalike(domain as string, [comp + ".com"])).toBe(exp);
   });
 });

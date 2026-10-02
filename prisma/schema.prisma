@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Scan {
+  id                 String   @id @default(uuid())
+  createdAt          DateTime @default(now())
+  verdict            String
+  why                String
+  extractionMode     String
+  redactedTranscript String?
+  indicatorHashes    String?
+  
+  claims             Claim[]
+}
+
+model Claim {
+  id          String  @id @default(uuid())
+  scanId      String
+  key         String
+  status      String
+  evidence    String
+  ruleId      String
+  nextAction  String?
+  limitations String?
+  sourcesJson String?
+
+  scan        Scan    @relation(fields: [scanId], references: [id])
+}
+
+model Indicator {
+  hash        String   @id
+  type        String
+  firstSeen   DateTime @default(now())
+  lastSeen    DateTime @default(now())
+  reportCount Int      @default(0)
+  scanCount   Int      @default(0)
+}
+
+model Report {
+  id            String   @id @default(uuid())
+  createdAt     DateTime @default(now())
+  indicatorHash String
+  type          String
+  note          String?
+  reporterHash  String
+}

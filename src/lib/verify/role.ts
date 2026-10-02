@@ -22,7 +22,7 @@ export class BraveSearchProvider implements SearchProvider {
     if (!res.ok) throw new Error("Search failed");
     const data = await res.json();
     
-    return data.web?.results?.map((r: any) => ({
+    return data.web?.results?.map((r: { title: string; url: string; description: string }) => ({
       title: r.title,
       url: r.url,
       snippet: r.description
@@ -30,7 +30,7 @@ export class BraveSearchProvider implements SearchProvider {
   }
 }
 
-export async function verifyRole(claims: any, provider: SearchProvider): Promise<VerifyResult> {
+export async function verifyRole(claims: { role?: string; company?: string }, provider: SearchProvider): Promise<VerifyResult> {
   const role = claims.role;
   const companyName = claims.company;
   
@@ -98,8 +98,9 @@ export async function verifyRole(claims: any, provider: SearchProvider): Promise
       sources: []
     };
     
-  } catch (e: any) {
-    if (e.message === "no search key") {
+  } catch (e: unknown) {
+    const error = e as Error;
+    if (error.message === "no search key") {
       return {
         claim: "role",
         status: "UNCLEAR",

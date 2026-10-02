@@ -29,19 +29,19 @@ async function getDomainAge(regDomain: string): Promise<{ dateStr?: string; erro
   
   try {
     const data = JSON.parse(result.text);
-    const regEvent = data.events?.find((e: any) => e.eventAction === "registration");
+    const regEvent = data.events?.find((e: { eventAction?: string; eventDate?: string }) => e.eventAction === "registration");
     if (regEvent && regEvent.eventDate) {
       const ageDays = (Date.now() - new Date(regEvent.eventDate).getTime()) / (1000 * 60 * 60 * 24);
       rdapCache.set(regDomain, { timestamp: Date.now(), dateStr: regEvent.eventDate });
       return { dateStr: regEvent.eventDate, ageDays };
     }
     return { error: "no_registration_date" };
-  } catch (e: any) {
+  } catch (e: unknown) {
     return { error: "invalid_json" };
   }
 }
 
-export async function verifyLinks(claims: any): Promise<VerifyResult> {
+export async function verifyLinks(claims: { company?: string; urls?: string[] }): Promise<VerifyResult> {
   const companyName = claims.company;
   const urls = Array.from(new Set(claims.urls || [] as string[])).slice(0, 5);
   
@@ -50,8 +50,8 @@ export async function verifyLinks(claims: any): Promise<VerifyResult> {
   }
 
   let worstStatus = "VERIFIED";
-  let combinedEvidence: string[] = [];
-  let combinedSources: { url: string; label: string }[] = [];
+  const combinedEvidence: string[] = [];
+  const combinedSources: { url: string; label: string }[] = [];
   let ruleId = "link.verified";
   let limitations = "";
 
@@ -84,7 +84,7 @@ export async function verifyLinks(claims: any): Promise<VerifyResult> {
       } catch (e) {}
     }
     
-    let chainStr = fetchRes.chain.length > 1 ? `${initialHost} -> ${finalHost}` : finalHost;
+    const chainStr = fetchRes.chain.length > 1 ? `${initialHost} -> ${finalHost}` : finalHost;
 
     if (fetchRes.blocked) {
       updateWorst("RISK");
@@ -166,7 +166,7 @@ export async function verifyLinks(claims: any): Promise<VerifyResult> {
 
   return {
     claim: "link",
-    status: worstStatus as any,
+    status: worstStatus as "VERIFIED" | "RISK" | "UNCLEAR" | "NOT_VERIFIED",
     evidence: combinedEvidence.join("; "),
     ruleId: ruleId,
     sources: combinedSources,

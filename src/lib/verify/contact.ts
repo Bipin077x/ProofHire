@@ -5,7 +5,9 @@ import { getHostFromEmailOrUrl, isLookalike, isOfficial } from "./domain";
 const FREE_MAIL_PROVIDERS = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "proton.me", "rediffmail.com", "ymail.com"];
 const PLACEHOLDER_DOMAINS = ["example.com", "example.org", "test.com", "localhost"];
 
-export function verifyContact(claims: any): VerifyResult {
+interface ContactClaims { company?: string; emails?: string[]; phones?: string[]; }
+
+export function verifyContact(claims: ContactClaims): VerifyResult {
   const companyName = claims.company || "";
   const emails = claims.emails || [];
   const phones = claims.phones || [];

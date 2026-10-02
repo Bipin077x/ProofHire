@@ -12,7 +12,7 @@ describe("runAllVerifiers", () => {
     vi.spyOn(link, "verifyLinks").mockResolvedValue({
       claim: "link", status: "VERIFIED", evidence: "", ruleId: "", sources: []
     });
-    const results = await runAllVerifiers({ company: "Google" }, { searchProvider: new MockProvider() });
+    const results = await runAllVerifiers({ transcript: "", company: "Google" }, { searchProvider: new MockProvider() });
     expect(results.length).toBe(6);
     expect(results.find(r => r.claim === "link")).toBeDefined();
     expect(results.find(r => r.claim === "role")).toBeDefined();
@@ -21,7 +21,7 @@ describe("runAllVerifiers", () => {
 
   it("handles timeout or rejected promises as UNCLEAR", async () => {
     vi.spyOn(link, "verifyLinks").mockRejectedValue(new Error("Network Error"));
-    const results = await runAllVerifiers({ company: "Google" }, { searchProvider: new MockProvider() });
+    const results = await runAllVerifiers({ transcript: "", company: "Google" }, { searchProvider: new MockProvider() });
     const linkResult = results.find(r => r.claim === "link");
     expect(linkResult?.status).toBe("UNCLEAR");
     expect(linkResult?.ruleId).toBe("system.check_failed");
@@ -31,7 +31,7 @@ describe("runAllVerifiers", () => {
     vi.useFakeTimers();
     vi.spyOn(link, "verifyLinks").mockImplementation(() => new Promise(() => {})); // Hangs forever
     
-    const runPromise = runAllVerifiers({ company: "Google" }, { searchProvider: new MockProvider() });
+    const runPromise = runAllVerifiers({ transcript: "", company: "Google" }, { searchProvider: new MockProvider() });
     
     // Advance timers by 15s to trigger timeout
     vi.advanceTimersByTime(15000);

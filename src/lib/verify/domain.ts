@@ -27,8 +27,9 @@ export function registrableDomain(host: string): string {
 }
 
 export function isOfficial(host: string, officialDomains: string[]): boolean {
+  const lowerHost = host.toLowerCase();
   return officialDomains.some((domain) => {
-    return host === domain || host.endsWith("." + domain);
+    return lowerHost === domain || lowerHost.endsWith("." + domain);
   });
 }
 

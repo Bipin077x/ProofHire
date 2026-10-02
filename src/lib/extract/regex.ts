@@ -41,8 +41,12 @@ export function extractUrls(text: string): string[] {
 
 export function extractUpi(text: string): string[] {
   const matches = text.match(upiRegex) || [];
+  const emails = extractEmails(text);
   // Exclude matches that are actually emails (e.g. if the regex missed the dot check somehow)
-  const filtered = matches.filter(m => !m.includes(".com") && !m.includes(".in") && !m.includes(".org"));
+  const filtered = matches.filter(m => {
+    if (emails.some(e => e.includes(m))) return false;
+    return !m.includes(".com") && !m.includes(".in") && !m.includes(".org");
+  });
   return Array.from(new Set(filtered));
 }
 

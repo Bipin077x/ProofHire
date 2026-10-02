@@ -1,12 +1,13 @@
-import { VerifyResult } from "./types";
+import { VerifyResult, ClaimKey } from "./types";
 import { verifyPayment } from "./payment";
 import { verifyContact } from "./contact";
 import { verifyCompany } from "./company";
 import { verifyPressure } from "./pressure";
 import { verifyLinks } from "./link";
 import { verifyRole, SearchProvider } from "./role";
+import type { ClaimsInput } from "../extract/claimsSchema";
 
-export function runOfflineVerifiers(claims: any): VerifyResult[] {
+export function runOfflineVerifiers(claims: ClaimsInput): VerifyResult[] {
   return [
     verifyPayment(claims),
     verifyContact(claims),
@@ -19,7 +20,7 @@ export interface VerificationDeps {
   searchProvider: SearchProvider;
 }
 
-export async function runAllVerifiers(claims: any, deps: VerificationDeps): Promise<VerifyResult[]> {
+export async function runAllVerifiers(claims: ClaimsInput, deps: VerificationDeps): Promise<VerifyResult[]> {
   const offline = runOfflineVerifiers(claims);
   
   const timeoutPromise = (name: string) => new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 15000));
@@ -29,23 +30,23 @@ export async function runAllVerifiers(claims: any, deps: VerificationDeps): Prom
   
   const [linkRes, roleRes] = await Promise.allSettled([linkPromise, rolePromise]);
   
-  const mapResult = (res: PromiseSettledResult<any>, claimName: string): VerifyResult => {
+  const mapResult = (res: PromiseSettledResult<VerifyResult>, claimName: ClaimKey): VerifyResult => {
     if (res.status === "fulfilled") {
       return res.value;
     }
     return {
-      claim: claimName as any,
+      claim: claimName,
       status: "UNCLEAR",
       evidence: "check failed",
       ruleId: "system.check_failed",
-      limitations: res.reason?.message || "Unknown error",
+      limitations: (res as PromiseRejectedResult).reason?.message || "Unknown error",
       sources: []
     };
   };
 
   return [
     ...offline,
-    mapResult(linkRes, "link"),
-    mapResult(roleRes, "role")
+    mapResult(linkRes as PromiseSettledResult<VerifyResult>, "link"),
+    mapResult(roleRes as PromiseSettledResult<VerifyResult>, "role")
   ];
 }

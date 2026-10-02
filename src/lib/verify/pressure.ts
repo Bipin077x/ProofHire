@@ -14,8 +14,10 @@ const PRESSURE_PHRASES = [
   "100% placement"
 ];
 
-export function verifyPressure(claims: any): VerifyResult {
-  let foundPhrases: string[] = [];
+interface PressureClaims { transcript?: string; pressureTactics?: string[]; }
+
+export function verifyPressure(claims: PressureClaims): VerifyResult {
+  const foundPhrases: string[] = [];
   
   const text = claims.transcript ? claims.transcript.toLowerCase() : "";
   

@@ -178,3 +178,19 @@ export function resolveCompany(name: string): { company: CompanyData | null; con
   
   return { company: bestMatch, confidence: bestConfidence };
 }
+
+export function resolveCompanyFromDomains(domains: string[]): { company: CompanyData | null } {
+  if (!domains || domains.length === 0) return { company: null };
+  for (const domain of domains) {
+    const lower = domain.toLowerCase();
+    for (const key of Object.keys(KNOWN_COMPANIES)) {
+      const comp = KNOWN_COMPANIES[key];
+      for (const off of comp.officialDomains) {
+        if (lower === off || lower.endsWith('.' + off)) {
+          return { company: comp };
+        }
+      }
+    }
+  }
+  return { company: null };
+}

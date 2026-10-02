@@ -1,5 +1,5 @@
 export type Status = "VERIFIED" | "UNCLEAR" | "NOT_VERIFIED" | "RISK";
-export type ClaimKey = "payment" | "contact" | "company" | "role" | "link" | "pressure";
+export type ClaimKey = "payment" | "contact" | "company" | "role" | "link" | "pressure" | "reports";
 
 export interface Source {
   label: string;

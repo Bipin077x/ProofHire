@@ -1,9 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { ClaimsSchema } from "./claimsSchema";
+import { ClaimsSchema, ClaimsInput } from "./claimsSchema";
 import { buildMessage } from "./builder";
 import { extractEmails, extractPhones, extractUrls, extractUpi, extractFeeWording } from "./regex";
 
-async function callAnthropic(payload: any): Promise<string> {
+interface MessagePayload {
+  system: string;
+  messages: Array<{ role: "user" | "assistant"; content: Anthropic.MessageCreateParams['messages'][0]['content'] }>;
+}
+
+async function callAnthropic(payload: MessagePayload): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   const model = process.env.ANTHROPIC_MODEL;
   if (!apiKey) {
@@ -17,13 +22,34 @@ async function callAnthropic(payload: any): Promise<string> {
     model,
     max_tokens: 1024,
     temperature: 0,
-    ...payload,
+    system: payload.system,
+    messages: payload.messages,
   });
-  const textBlock = response.content.find((c: any) => c.type === "text");
+  // response could be a stream, but we didn't set stream: true, so it's a Message
+  const msg = response as Anthropic.Message;
+  const textBlock = msg.content.find((c) => c.type === "text");
   return textBlock && 'text' in textBlock ? textBlock.text : "";
 }
 
-function mergeResults(llmData: any, transcript: string, mode: "regex-only" | "llm+regex") {
+type ExtractedBase = {
+  transcript: string;
+  platform: undefined;
+  company: undefined;
+  role: undefined;
+  recruiterName: undefined;
+  emails: string[];
+  phones: string[];
+  urls: string[];
+  payment: { requested: boolean };
+  pressureTactics: string[];
+  stipend: undefined;
+  location: undefined;
+  confidence: Record<string, never>;
+  extractionMode?: string;
+  [key: string]: unknown;
+};
+
+function mergeResults(llmData: ClaimsInput | ExtractedBase, transcript: string, mode: "regex-only" | "llm+regex") {
   const regexData = {
     emails: extractEmails(transcript),
     phones: extractPhones(transcript),
@@ -62,7 +88,7 @@ function getRegexOnlyBase(transcript: string) {
   };
 }
 
-export async function extractClaims(input: { text?: string; imageUrl?: string; regexOnly?: boolean }): Promise<any> {
+export async function extractClaims(input: { text?: string; imageUrl?: string; regexOnly?: boolean }): Promise<ExtractedBase | (ClaimsInput & { extractionMode: string })> {
   const transcript = input.text || "";
   
   if (input.regexOnly) {
@@ -75,7 +101,7 @@ export async function extractClaims(input: { text?: string; imageUrl?: string; r
     : { type: "text" as const, content: transcript };
     
   if (input.imageUrl && input.imageUrl.startsWith("data:image/")) {
-    const [header, base64] = input.imageUrl.split(",");
+    const [, base64] = input.imageUrl.split(",");
     msgInput.content = base64;
   }
     
@@ -89,7 +115,7 @@ export async function extractClaims(input: { text?: string; imageUrl?: string; r
     return mergeResults(base, transcript, "regex-only");
   }
 
-  let parsed: any = null;
+  let parsed: ClaimsInput | null = null;
   const tryParse = (str: string) => {
     try {
       const cleaned = str.replace(/```json\n?|```/g, "").trim();
