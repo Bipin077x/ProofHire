@@ -99,12 +99,12 @@ export async function handleAnalyzeRequest(req: Request, deps: RouteDeps) {
          // A URL-only input goes to safeResolve only; never fetch or parse page content.
          // Return basic passport for verified URL.
          const result: AnalyzeResult = {
-           extracted: {
+           claims: {
              transcript: "",
              urls: [resolveResult.finalUrl || url]
            },
-           rollup: { verdict: "UNVERIFIED", reasons: [] },
-           passport: []
+           verdict: "UNVERIFIED", why: [],
+           results: []
          };
          return await storeAndReturn(result, deps.db, "");
       } else {
@@ -126,7 +126,7 @@ export async function handleAnalyzeRequest(req: Request, deps: RouteDeps) {
 
 async function storeAndReturn(result: AnalyzeResult, db: PrismaClient, rawText: string) {
   const redacted = redactText(rawText);
-  const extractionMode = result.extracted?.extractionMode || "regex-only";
+  const extractionMode = result.claims?.extractionMode || "regex-only";
   const indicators = extractIndicatorsFromText(rawText);
   
   let hasReportsRISK = false;
@@ -177,7 +177,7 @@ async function storeAndReturn(result: AnalyzeResult, db: PrismaClient, rawText: 
     }
   }
 
-  const passport = result.passport || [];
+  const passport = result.results || [];
   if (hasReportsRISK) {
     passport.push({
       claim: "reports" as ClaimKey,

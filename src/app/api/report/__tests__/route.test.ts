@@ -46,7 +46,7 @@ describe("POST /api/report", () => {
     expect(report?.note).toBe("Test note");
   });
 
-  it("same reporter + same indicator within 24h -> 409 and count unchanged", async () => {
+  it("same reporter + same indicator within 24h -> 200 and count unchanged", async () => {
     const indHash = hashIndicator({ type: "phone", normalizedValue: "9876543210" });
     const scan = await db.scan.create({
       data: { verdict: "UNVERIFIED", why: "", extractionMode: "regex-only", indicatorHashes: JSON.stringify([indHash]) }
@@ -58,7 +58,7 @@ describe("POST /api/report", () => {
 
     const req = createReq({ passportId: scan.id, indicatorType: "phone" }, "192.168.1.2");
     const res = await POST(req);
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(200);
 
     const ind = await db.indicator.findUnique({ where: { hash: indHash } });
     expect(ind?.reportCount).toBe(1);

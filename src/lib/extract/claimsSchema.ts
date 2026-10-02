@@ -4,6 +4,7 @@ export const ClaimsSchema = z.object({
   transcript: z.string(),
   platform: z.string().optional(),
   company: z.string().optional(),
+  companySource: z.enum(["named_in_post", "inferred_from_domain"]).optional(),
   role: z.string().optional(),
   recruiterName: z.string().optional(),
   emails: z.array(z.string()).optional(),

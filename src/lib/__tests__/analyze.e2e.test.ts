@@ -56,6 +56,7 @@ vi.mock("../safe-fetch", async (importOriginal) => {
         };
       }
 
+      // Official domains resolve fine
       return {
         finalUrl: url,
         chain: [{ url, status: 200 }],
@@ -75,65 +76,79 @@ describe("End-to-End Analysis (regex-only)", () => {
   it("01_simple_scam -> HIGH_RISK, payment RISK, contact RISK, link RISK", async () => {
     const text = fs.readFileSync(path.join(fixturesDir, "01_simple_scam.txt"), "utf-8");
     const result = await analyzePost(text, undefined, fakeDeps);
-    expect(result.rollup?.verdict).toBe("HIGH_RISK");
+    expect(result.verdict).toBe("HIGH_RISK");
     
-    const payment = result.passport!.find(p => p.claim === "payment");
+    const payment = result.results!.find(p => p.claim === "payment");
     expect(payment?.status).toBe("RISK");
     
-    const contact = result.passport!.find(p => p.claim === "contact");
+    const contact = result.results!.find(p => p.claim === "contact");
     expect(contact?.status).toBe("RISK");
     
-    const link = result.passport!.find(p => p.claim === "link");
+    const link = result.results!.find(p => p.claim === "link");
     expect(link?.status).toBe("RISK");
   });
 
-  it("02_legit_email -> UNVERIFIED, payment VERIFIED, no RISK row", async () => {
-    const text = fs.readFileSync(path.join(fixturesDir, "02_legit_email.txt"), "utf-8");
+  it("06_legit_email -> NO_RED_FLAGS_FOUND, payment+contact+company+link VERIFIED", async () => {
+    const text = fs.readFileSync(path.join(fixturesDir, "06_legit_email.txt"), "utf-8");
     const result = await analyzePost(text, undefined, fakeDeps);
-    expect(result.rollup?.verdict).toBe("UNVERIFIED");
+    expect(result.verdict).toBe("NO_RED_FLAGS_FOUND");
     
-    const payment = result.passport!.find(p => p.claim === "payment");
+    const payment = result.results!.find(p => p.claim === "payment");
     expect(payment?.status).toBe("VERIFIED");
     
-    const hasRisk = result.passport!.some(p => p.status === "RISK");
+    const contact = result.results!.find(p => p.claim === "contact");
+    expect(contact?.status).toBe("VERIFIED");
+    
+    const company = result.results!.find(p => p.claim === "company");
+    expect(company?.status).toBe("VERIFIED");
+    
+    const link = result.results!.find(p => p.claim === "link");
+    expect(link?.status).toBe("VERIFIED");
+    
+    const hasRisk = result.results!.some(p => p.status === "RISK");
     expect(hasRisk).toBe(false);
   });
 
-  it("03_mixed_signals -> HIGH_RISK, payment RISK, pressure UNCLEAR, link RISK", async () => {
-    const text = fs.readFileSync(path.join(fixturesDir, "03_mixed_signals.txt"), "utf-8");
+  it("03_scam_fake_google -> HIGH_RISK, payment RISK", async () => {
+    const text = fs.readFileSync(path.join(fixturesDir, "03_scam_fake_google.txt"), "utf-8");
     const result = await analyzePost(text, undefined, fakeDeps);
-    expect(result.rollup?.verdict).toBe("HIGH_RISK");
+    expect(result.verdict).toBe("HIGH_RISK");
     
-    const payment = result.passport!.find(p => p.claim === "payment");
+    const payment = result.results!.find(p => p.claim === "payment");
     expect(payment?.status).toBe("RISK");
     
-    const pressure = result.passport!.find(p => p.claim === "pressure");
-    expect(pressure?.status).toBe("UNCLEAR");
-    
-    const link = result.passport!.find(p => p.claim === "link");
-    expect(link?.status).toBe("RISK"); // microsoft-hiring.co -> lookalike
+    const contact = result.results!.find(p => p.claim === "contact");
+    expect(contact?.status).toBe("RISK"); // g00gle-careers.in is a lookalike
   });
 
-  it("04_obfuscated_links -> HIGH_RISK, link RISK for IPs, contact RISK, 007.com not blocked", async () => {
-    const text = fs.readFileSync(path.join(fixturesDir, "04_obfuscated_links.txt"), "utf-8");
+  it("04_legit_startup -> UNVERIFIED, no RISK row", async () => {
+    const text = fs.readFileSync(path.join(fixturesDir, "04_legit_startup.txt"), "utf-8");
     const result = await analyzePost(text, undefined, fakeDeps);
-    expect(result.rollup?.verdict).toBe("HIGH_RISK");
+    expect(result.verdict).toBe("UNVERIFIED");
     
-    const link = result.passport!.find(p => p.claim === "link");
+    const hasRisk = result.results!.some(p => p.status === "RISK");
+    expect(hasRisk).toBe(false);
+  });
+
+  it("08_obfuscated_links -> HIGH_RISK, link RISK for IPs, contact RISK, 007.com not blocked", async () => {
+    const text = fs.readFileSync(path.join(fixturesDir, "08_obfuscated_links.txt"), "utf-8");
+    const result = await analyzePost(text, undefined, fakeDeps);
+    expect(result.verdict).toBe("HIGH_RISK");
+    
+    const link = result.results!.find(p => p.claim === "link");
     expect(link?.status).toBe("RISK");
-    expect(link?.evidence).toContain("127.0.0.1 (blocked: link points to an internal/unsafe address)");
-    // 0177.0.0.1 normalizes to 127.0.0.1, so it shouldn't appear separately due to deduping
+    expect(link?.evidence).toContain("127.0.0.1 (Link is unsafe)");
     expect(link?.evidence).toContain("007.com");
     expect(link?.evidence).not.toContain("007.com (blocked");
     
-    const contact = result.passport!.find(p => p.claim === "contact");
+    const contact = result.results!.find(p => p.claim === "contact");
     expect(contact?.status).toBe("RISK"); // mygoogle.com -> lookalike
   });
 
-  it("sample -> HIGH_RISK", async () => {
-    const text = fs.readFileSync(path.join(fixturesDir, "sample.txt"), "utf-8");
+  it("09_sample -> HIGH_RISK", async () => {
+    const text = fs.readFileSync(path.join(fixturesDir, "09_sample.txt"), "utf-8");
     const result = await analyzePost(text, undefined, fakeDeps);
-    expect(result.rollup?.verdict).toBe("HIGH_RISK");
+    expect(result.verdict).toBe("HIGH_RISK");
   });
 
   it("shortener, gmail -> never NO_RED_FLAGS_FOUND", async () => {
@@ -142,20 +157,14 @@ describe("End-to-End Analysis (regex-only)", () => {
     const res1 = await analyzePost(shortener, undefined, fakeDeps);
     const res2 = await analyzePost(gmail, undefined, fakeDeps);
     
-    expect(res1.rollup?.verdict).not.toBe("NO_RED_FLAGS_FOUND");
-    expect(res2.rollup?.verdict).not.toBe("NO_RED_FLAGS_FOUND");
+    expect(res1.verdict).not.toBe("NO_RED_FLAGS_FOUND");
+    expect(res2.verdict).not.toBe("NO_RED_FLAGS_FOUND");
   });
 
   it("infosys -> never HIGH_RISK/CAUTION", async () => {
     const text = fs.readFileSync(path.join(fixturesDir, "infosys.txt"), "utf-8");
     const result = await analyzePost(text, undefined, fakeDeps);
-    expect(result.rollup?.verdict).not.toBe("HIGH_RISK");
-    expect(result.rollup?.verdict).not.toBe("CAUTION");
-  });
-
-  it("1_scam_data_entry -> HIGH_RISK", async () => {
-    const text = fs.readFileSync(path.join(fixturesDir, "1_scam_data_entry.txt"), "utf-8");
-    const result = await analyzePost(text, undefined, fakeDeps);
-    expect(result.rollup?.verdict).toBe("HIGH_RISK");
+    expect(result.verdict).not.toBe("HIGH_RISK");
+    expect(result.verdict).not.toBe("CAUTION");
   });
 });

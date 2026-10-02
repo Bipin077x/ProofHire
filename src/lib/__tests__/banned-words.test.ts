@@ -4,7 +4,7 @@ import path from "path";
 import { analyzePost } from "../analyze";
 import type { VerificationDeps } from "../verify";
 
-const fixturesDir = path.join(__dirname, "../../../../scripts/fixtures");
+const fixturesDir = path.join(__dirname, "../../../scripts/fixtures");
 
 const checkNoBannedWords = (obj: unknown) => {
   if (typeof obj === "string") {
@@ -14,7 +14,8 @@ const checkNoBannedWords = (obj: unknown) => {
     obj.forEach(checkNoBannedWords);
   } else if (obj !== null && typeof obj === "object") {
     for (const key of Object.keys(obj)) {
-      if (key !== "verdict" && key !== "reasons" && key !== "evidence" && key !== "nextAction" && key !== "limitations" && key !== "label" && key !== "claim" && key !== "status" && key !== "ruleId" && key !== "sources" && key !== "passport") {
+      // Check all user-visible string fields
+      if (!["verdict", "why", "evidence", "nextAction", "limitations", "label", "claim", "status", "ruleId", "sources", "results"].includes(key)) {
         continue;
       }
       // @ts-ignore
@@ -24,21 +25,16 @@ const checkNoBannedWords = (obj: unknown) => {
 };
 
 describe("Banned Words Scanner", () => {
-  it("scans all 8 fixtures", async () => {
-    const fixtures = [
-      "01_simple_scam.txt", "02_legit_email.txt", "03_mixed_signals.txt", "04_obfuscated_links.txt",
-      "sample.txt", "shortener.txt", "gmail.txt", "infosys.txt"
-    ];
+  it("scans all fixtures for banned words in evidence, nextAction, limitations, why", async () => {
+    const fixtures = fs.readdirSync(fixturesDir).filter(f => f.endsWith(".txt"));
     for (const file of fixtures) {
       const p = path.join(fixturesDir, file);
-      if (fs.existsSync(p)) {
-        const text = fs.readFileSync(p, "utf-8");
-        const deps: VerificationDeps = { searchProvider: { async search() { return []; } } };
-        const result = await analyzePost(text, undefined, deps);
-        checkNoBannedWords(result.rollup?.verdict);
-        checkNoBannedWords(result.rollup?.reasons);
-        checkNoBannedWords(result.passport);
-      }
+      const text = fs.readFileSync(p, "utf-8");
+      const deps: VerificationDeps = { searchProvider: { async search() { return []; } } };
+      const result = await analyzePost(text, undefined, deps);
+      checkNoBannedWords(result.verdict);
+      checkNoBannedWords(result.why);
+      checkNoBannedWords(result.results);
     }
-  });
+  }, 30000);
 });

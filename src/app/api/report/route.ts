@@ -77,7 +77,7 @@ export async function POST(req: Request) {
     });
 
     if (recentReport) {
-      return NextResponse.json({ error: "Already reported recently" }, { status: 409 });
+      return NextResponse.json({ success: true, message: "Already reported recently" });
     }
 
     await db.report.create({

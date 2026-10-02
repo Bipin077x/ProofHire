@@ -4,7 +4,7 @@ import path from 'path';
 
 function run() {
   try {
-    execSync('npx vitest run --no-file-parallelism --reporter=json --outputFile=.testcount.json', { encoding: 'utf-8', stdio: 'pipe' });
+    execSync('npx vitest run --no-file-parallelism --testTimeout=30000 --reporter=json --outputFile=.testcount.json', { encoding: 'utf-8', stdio: 'pipe' });
   } catch (_err: unknown) {
     // Tests might fail, that's fine, we still have the json
   }

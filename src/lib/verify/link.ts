@@ -130,14 +130,14 @@ export async function verifyLinks(claims: { company?: string; urls?: string[] })
 
     if (fetchRes.blocked) {
       updateWorst("RISK");
-      combinedEvidence.push(`${chainStr} (blocked: link points to an internal/unsafe address)`);
+      combinedEvidence.push(`${chainStr} (Link is unsafe)`);
       if (ruleId !== "link.lookalike" && ruleId !== "link.punycode") ruleId = "link.blocked_unsafe";
       continue;
     }
 
     if (fetchRes.error) {
       updateWorst("UNCLEAR");
-      combinedEvidence.push(`${chainStr} (destination hidden; could not be resolved)`);
+      combinedEvidence.push(`${chainStr} (Link failed to resolve)`);
       if (ruleId !== "link.lookalike" && ruleId !== "link.punycode" && ruleId !== "link.blocked_unsafe") ruleId = "link.unresolved";
       continue;
     }

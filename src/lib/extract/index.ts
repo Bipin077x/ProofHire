@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { ClaimsSchema, ClaimsInput } from "./claimsSchema";
 import { buildMessage } from "./builder";
-import { extractEmails, extractPhones, extractUrls, extractUpi, extractFeeWording } from "./regex";
+import { extractEmails, extractPhones, extractUrls, extractUpi, extractFeeWording, extractRole, extractPressureTactics } from "./regex";
 
 interface MessagePayload {
   system: string;
@@ -56,11 +56,15 @@ function mergeResults(llmData: ClaimsInput | ExtractedBase, transcript: string, 
     urls: extractUrls(transcript),
     upi: extractUpi(transcript),
     feeWording: extractFeeWording(transcript),
+    role: extractRole(transcript),
+    pressureTactics: extractPressureTactics(transcript),
   };
   const merged = { ...llmData, extractionMode: mode };
   if (regexData.emails.length) merged.emails = regexData.emails;
   if (regexData.phones.length) merged.phones = regexData.phones;
   if (regexData.urls.length) merged.urls = regexData.urls;
+  if (regexData.role) merged.role = regexData.role;
+  if (regexData.pressureTactics.length) merged.pressureTactics = regexData.pressureTactics;
   if (regexData.upi.length) {
     merged.payment = { ...(merged.payment ?? {}), method: regexData.upi[0], requested: true };
   }

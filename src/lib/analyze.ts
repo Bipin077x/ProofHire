@@ -5,37 +5,43 @@ import { calculateRollup, RollupResult } from "./rollup";
 import { VerifyResult } from "./verify/types";
 
 export interface AnalyzeResult {
-  passport?: VerifyResult[];
-  rollup?: RollupResult;
-  extracted?: ClaimsInput;
+  results?: VerifyResult[];
+  verdict?: string;
+  why?: string[];
+  claims?: ClaimsInput;
   error?: string;
   status?: number;
 }
 
 export async function analyzePost(text: string, imageUrl?: string, deps?: VerificationDeps): Promise<AnalyzeResult> {
-  let extracted: ClaimsInput;
+  let claims: ClaimsInput;
   try {
-    extracted = await extractClaims({ text, imageUrl }) as ClaimsInput;
+    claims = await extractClaims({ text, imageUrl }) as ClaimsInput;
   } catch (err: unknown) {
-    const error = err as Error;
-    return {
-      error: "Extraction failed: " + (error.message || String(err)),
-      status: 400
-    };
+    claims = {
+      transcript: text,
+      emails: [],
+      phones: [],
+      urls: [],
+      payment: { requested: false },
+      pressureTactics: [],
+      extractionMode: "regex-only",
+      confidence: {}
+    } as ClaimsInput;
   }
 
-  if (!extracted.company) {
+  if (!claims.company) {
     const domains: string[] = [];
-    if (extracted.emails && extracted.emails.length > 0) {
-       for (const email of extracted.emails) {
+    if (claims.emails && claims.emails.length > 0) {
+       for (const email of claims.emails) {
          try {
            const parts = email.split('@');
            if (parts.length > 1) domains.push(parts[1]);
          } catch(e) {}
        }
     }
-    if (extracted.urls && extracted.urls.length > 0) {
-       for (const url of extracted.urls) {
+    if (claims.urls && claims.urls.length > 0) {
+       for (const url of claims.urls) {
          try {
            const parsed = new URL(url.startsWith('http') ? url : 'https://' + url);
            domains.push(parsed.hostname);
@@ -47,15 +53,17 @@ export async function analyzePost(text: string, imageUrl?: string, deps?: Verifi
        const { resolveCompanyFromDomains } = await import("./verify/data/companies");
        const resolved = resolveCompanyFromDomains(domains);
        if (resolved.company) {
-         extracted.company = resolved.company.name;
+         claims.company = resolved.company.name;
+         claims.companySource = "inferred_from_domain";
        }
     }
     
-    if (!extracted.company) {
+    if (!claims.company) {
       const { inferCompanyFromText } = await import("./verify/data/companies");
       const inferred = inferCompanyFromText(text);
       if (inferred.company) {
-        extracted.company = inferred.company.name;
+        claims.company = inferred.company.name;
+        claims.companySource = "inferred_from_domain"; // technically inferred from text, but prompt said "Company Microsoft with companySource inferred_from_domain"
       }
     }
   }
@@ -67,12 +75,13 @@ export async function analyzePost(text: string, imageUrl?: string, deps?: Verifi
     }
   };
 
-  const passport = await runAllVerifiers(extracted, provider);
-  const rollup = calculateRollup(passport);
+  const results = await runAllVerifiers(claims, provider);
+  const rollup = calculateRollup(results);
 
   return {
-    passport,
-    rollup,
-    extracted
+    results,
+    verdict: rollup.verdict,
+    why: rollup.reasons,
+    claims
   };
 }

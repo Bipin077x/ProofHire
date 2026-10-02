@@ -12,6 +12,12 @@ export const upiRegex = /\b[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z0-9]{2,64}\b(?!\.[a-zA-
 // Fees
 export const feeWordingRegex = /(?:pay|payment|fee|charge|registration|deposit|send)[^.!?;]*(?:\b(?:₹|Rs\.?|INR)?\s?\d+[\d,]*)?/gi;
 
+// Pressure tactics
+export const pressureRegex = /\b(?:urgent|immediately|limited\s+slots|today\s+only|act\s+fast|hurry|final\s+warning)\b/gi;
+
+// Roles (very basic)
+export const roleRegex = /\b(?:software\s+engineer|developer|data\s+entry|hr|manager|analyst|designer)\b/gi;
+
 export function extractEmails(text: string): string[] {
   return Array.from(new Set(text.match(emailRegex) || []));
 }
@@ -77,7 +83,22 @@ export function extractFeeWording(text: string): string[] {
       return false;
     }
     
+    // Ignore "send email/resume/cv" - normal recruitment phrases, not payment
+    if (/\bsend\b/i.test(mLower) && /\b(?:email|resume|cv|application|details)\b/i.test(mLower)) {
+      return false;
+    }
+    
     return true;
   });
   return Array.from(new Set(filtered));
+}
+
+export function extractPressureTactics(text: string): string[] {
+  const matches = text.match(pressureRegex) || [];
+  return Array.from(new Set(matches.map(m => m.toLowerCase())));
+}
+
+export function extractRole(text: string): string | undefined {
+  const matches = text.match(roleRegex);
+  return matches ? matches[0] : undefined;
 }

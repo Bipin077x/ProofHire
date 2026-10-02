@@ -39,18 +39,18 @@ async function main() {
     }
   });
 
-  if (regexOnly && result.extracted) {
-    result.extracted.extractionMode = "regex-only";
+  if (regexOnly && result.claims) {
+    result.claims.extractionMode = "regex-only";
   }
 
-  console.log("Verdict:", result.rollup?.verdict);
-  console.log("Why:", result.rollup?.reasons.join("; "));
+  console.log("Verdict:", result.verdict);
+  console.log("Why:", result.why?.join("; "));
   console.log("\nEXTRACTED:");
-  console.log(JSON.stringify(result.extracted, null, 2));
+  console.log(JSON.stringify(result.claims, null, 2));
   console.log("\nPASSPORT (Red Flags & Verified Claims):");
   
-  if (result.passport) {
-    for (const p of result.passport) {
+  if (result.results) {
+    for (const p of result.results) {
       console.log(`${p.claim} | ${p.status} | ${p.ruleId} | ${p.evidence} | ${p.nextAction || ""}`);
     }
   }

@@ -108,6 +108,12 @@ export const KNOWN_COMPANIES: Record<string, CompanyData> = {
     officialDomains: ["paytm.com", "one97.com"],
     careersUrl: "https://paytm.com/careers",
   },
+  techmahindra: {
+    name: "Tech Mahindra",
+    aliases: ["tech mahindra"],
+    officialDomains: ["techmahindra.com"],
+    careersUrl: "https://careers.techmahindra.com",
+  },
 };
 
 function levenshtein(a: string, b: string): number {
@@ -221,3 +227,4 @@ export function inferCompanyFromText(text: string): { company: CompanyData | nul
   }
   return { company: bestMatch };
 }
+
