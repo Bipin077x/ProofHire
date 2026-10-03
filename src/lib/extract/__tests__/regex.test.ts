@@ -5,6 +5,7 @@ import {
   extractUrls,
   extractUpi,
   extractFeeWording,
+  extractRole,
 } from "../regex";
 
 describe("Regex Extraction", () => {
@@ -69,6 +70,12 @@ describe("Regex Extraction", () => {
       ["salary Rs. 4 LPA", false],
       ["no fee is ever charged", false],
       ["we never ask candidates for money", false],
+      // send email/resume -> NOT a fee
+      ["Send email to hr@company.com", false],
+      // send money -> IS a fee
+      ["Send Rs 500 to hr@ybl", true],
+      ["send ₹999 registration fee", true],
+      ["transfer 500 to confirm", true],
     ];
     it.each(feeCases)("fee('%s') -> %s", (input, shouldFind) => {
       const res = extractFeeWording(input as string);
@@ -76,6 +83,26 @@ describe("Regex Extraction", () => {
         expect(res.length).toBeGreaterThan(0);
       } else {
         expect(res).toHaveLength(0);
+      }
+    });
+  });
+
+  describe("Role Extraction", () => {
+    const roleCases: [string, string | null][] = [
+      ["We are hiring a Systems Engineer", "Systems Engineer"],
+      ["Looking for an intern to join us", "intern"],
+      ["Data Entry Clerk position available", "Data Entry"],
+      // non-roles that must NOT match
+      ["Please fill out the application form", null],
+      ["We are a recruitment agency", null],
+      ["Contact us for more information", null],
+    ];
+    it.each(roleCases)("extractRole('%s') -> %s", (input, expected) => {
+      const res = extractRole(input as string);
+      if (expected) {
+        expect(res?.toLowerCase()).toBe(expected.toLowerCase());
+      } else {
+        expect(res).toBeUndefined();
       }
     });
   });

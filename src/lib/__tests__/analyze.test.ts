@@ -37,5 +37,7 @@ describe("analyzePost", () => {
     const result = await analyzePost("bad data");
     expect(result.claims?.extractionMode).toBe("regex-only");
     expect(result.claims?.transcript).toBe("bad data");
+    // When LLM fails, llmFallback is true -> callers display "AI extraction unavailable"
+    expect(result.claims?.llmFallback).toBe(true);
   });
 });

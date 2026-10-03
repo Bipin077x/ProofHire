@@ -26,6 +26,7 @@ export async function analyzePost(text: string, imageUrl?: string, deps?: Verifi
       payment: { requested: false },
       pressureTactics: [],
       extractionMode: "regex-only",
+      llmFallback: true, // signals: "AI extraction unavailable"
       confidence: {}
     } as ClaimsInput;
   }

@@ -88,23 +88,26 @@ describe("End-to-End Analysis (regex-only)", () => {
     expect(link?.status).toBe("RISK");
   });
 
-  it("06_legit_email -> NO_RED_FLAGS_FOUND, payment+contact+company+link VERIFIED", async () => {
+  it("06_legit_email -> UNVERIFIED, no RISK rows, payment+company+link VERIFIED, contact UNCLEAR (no email in original)", async () => {
+    // Original 02_legit_email.txt content: careers.google.com URL but no explicit email address.
+    // contact is UNCLEAR because no email/phone is present.
+    // With all 4 required claims (payment/company/contact/link), contact is not VERIFIED -> UNVERIFIED.
     const text = fs.readFileSync(path.join(fixturesDir, "06_legit_email.txt"), "utf-8");
     const result = await analyzePost(text, undefined, fakeDeps);
-    expect(result.verdict).toBe("NO_RED_FLAGS_FOUND");
-    
+    expect(result.verdict).toBe("UNVERIFIED");
+
     const payment = result.results!.find(p => p.claim === "payment");
     expect(payment?.status).toBe("VERIFIED");
-    
-    const contact = result.results!.find(p => p.claim === "contact");
-    expect(contact?.status).toBe("VERIFIED");
-    
+
     const company = result.results!.find(p => p.claim === "company");
     expect(company?.status).toBe("VERIFIED");
-    
+
     const link = result.results!.find(p => p.claim === "link");
     expect(link?.status).toBe("VERIFIED");
-    
+
+    const contact = result.results!.find(p => p.claim === "contact");
+    expect(contact?.status).toBe("UNCLEAR"); // no email/phone in original file
+
     const hasRisk = result.results!.some(p => p.status === "RISK");
     expect(hasRisk).toBe(false);
   });

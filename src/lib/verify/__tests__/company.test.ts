@@ -76,5 +76,22 @@ describe("Company Verifier", () => {
       expect(result.status).toBe("UNCLEAR");
       expect(result.ruleId).toBe("company.missing");
     });
+
+    it("Tech Mahindra named_in_post -> VERIFIED when official domain present", () => {
+      // companySource: "named_in_post" means the LLM extracted the company name from the post text
+      const result = verifyCompany({
+        company: "Tech Mahindra",
+        companySource: "named_in_post" as const,
+        urls: ["https://careers.techmahindra.com"]
+      });
+      expect(result.status).toBe("VERIFIED");
+      expect(result.ruleId).toBe("company.known_with_proof");
+    });
+
+    it("Tech Mahindra without proof -> UNCLEAR", () => {
+      const result = verifyCompany({ company: "Tech Mahindra" });
+      expect(result.status).toBe("UNCLEAR");
+      expect(result.ruleId).toBe("company.known_without_proof");
+    });
   });
 });

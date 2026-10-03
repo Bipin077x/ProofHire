@@ -22,6 +22,7 @@ export const ClaimsSchema = z.object({
   location: z.string().optional(),
   confidence: z.record(z.number()).optional(),
   extractionMode: z.enum(["regex-only", "llm+regex"]).optional(),
+  llmFallback: z.boolean().optional(), // true when LLM failed and regex-only was used
 });
 
 export type ClaimsInput = z.infer<typeof ClaimsSchema>;

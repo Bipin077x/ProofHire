@@ -10,7 +10,7 @@ export const urlRegex = /(?:https?:\/\/)?(?:www\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\
 export const upiRegex = /\b[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z0-9]{2,64}\b(?!\.[a-zA-Z])/g;
 
 // Fees
-export const feeWordingRegex = /(?:pay|payment|fee|charge|registration|deposit|send)[^.!?;]*(?:\b(?:₹|Rs\.?|INR)?\s?\d+[\d,]*)?/gi;
+export const feeWordingRegex = /(?:pay|payment|fee|charge|registration|deposit|send|transfer)[^.!?;]*(?:\b(?:₹|Rs\.?|INR)?\s?\d+[\d,]*)?/gi;
 
 // Pressure tactics
 export const pressureRegex = /\b(?:urgent|immediately|limited\s+slots|today\s+only|act\s+fast|hurry|final\s+warning)\b/gi;
@@ -79,12 +79,13 @@ export function extractFeeWording(text: string): string[] {
     }
     
     // Ignore stipends / salaries
-    if (mLower.includes("stipend") || mLower.includes("salary") || mLower.includes("lpa") || mLower.match(/\b(?:month|yr|year|week|day|hr|hour)\b/)) {
+    // Note: \bhr\b would false-positive on "hr@ybl" (UPI). Only match /hr or per hr.
+    if (mLower.includes("stipend") || mLower.includes("salary") || mLower.includes("lpa") || mLower.match(/\b(?:month|yr|year|week|day|hour)\b/) || mLower.match(/(?:\/|per\s+)hr\b/)) {
       return false;
     }
     
-    // Ignore "send email/resume/cv" - normal recruitment phrases, not payment
-    if (/\bsend\b/i.test(mLower) && /\b(?:email|resume|cv|application|details)\b/i.test(mLower)) {
+    // Ignore "send/transfer email/resume/cv" - normal recruitment phrases, not payment
+    if (/\b(?:send|transfer)\b/i.test(mLower) && /\b(?:email|resume|cv|application|details)\b/i.test(mLower)) {
       return false;
     }
     
