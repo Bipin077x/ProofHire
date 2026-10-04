@@ -1,25 +1,6 @@
 import { VerifyResult } from "./types";
 
-const PRESSURE_PATTERNS: { label: string; regex: RegExp }[] = [
-  { label: "urgent", regex: /\burgent(?:ly)?\b/i },
-  { label: "need N candidates today", regex: /need \d+ candidates today/i },
-  { label: "walk-in", regex: /\bwalk-in\b/i },
-  { label: "immediate joining", regex: /\bimmediate joining\b/i },
-  { label: "apply today", regex: /\bapply today\b/i },
-  { label: "limited seats", regex: /\blimited seats\b/i },
-  { label: "last date today", regex: /\blast date today\b/i },
-  { label: "confirm your slot", regex: /\bconfirm your slot\b/i },
-  // Old ones for backward compatibility
-  { label: "confirm seat", regex: /\bconfirm seat\b/i },
-  { label: "guaranteed job", regex: /\bguaranteed job\b/i },
-  { label: "no interview", regex: /\bno interview\b/i },
-  { label: "earn per day", regex: /\bearn per day\b/i },
-  { label: "earn daily", regex: /\bearn daily\b/i },
-  { label: "before it's too late", regex: /before it's too late/i },
-  { label: "hurry", regex: /\bhurry\b/i },
-  { label: "immediate hiring", regex: /\bimmediate hiring\b/i },
-  { label: "100% placement", regex: /100% placement/i }
-];
+import { PRESSURE_PATTERNS } from "../extract/regex";
 
 interface PressureClaims { transcript?: string; pressureTactics?: string[]; }
 

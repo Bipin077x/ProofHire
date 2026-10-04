@@ -66,6 +66,45 @@ async function main() {
     w.write(`ERROR: ${e}\n`);
   }
 
+  // (e2) cat index.ts
+  section("(e2) cat src/lib/safe-fetch/index.ts");
+  try {
+    const content = fs.readFileSync("src/lib/safe-fetch/index.ts", "utf-8");
+    w.write(content);
+    process.stdout.write(content);
+  } catch (e) {
+    w.write(`ERROR: ${e}\n`);
+  }
+
+  // (e3) grep createSafeResolver
+  section("(e3) git grep -n createSafeResolver -- src :!src/lib/safe-fetch/__tests__");
+  run(`git grep -n createSafeResolver -- src ":!src/lib/safe-fetch/__tests__"`);
+
+  // (e4) git log --oneline --stat -- scripts/fixtures
+  section("(e4) git log --oneline --stat -- scripts/fixtures");
+  run("git log --oneline --stat -- scripts/fixtures");
+
+  // (e5) git diff HEAD~3 -- .testbaseline.json
+  section("(e5) git diff HEAD~3 -- .testbaseline.json");
+  run("git diff HEAD~3 -- .testbaseline.json");
+
+  // (e6) baseline lowered check
+  section("(e6) run testcount with baseline lowered (actually raised to trigger failure)");
+  try {
+     const bl = JSON.parse(fs.readFileSync(".testbaseline.json", "utf-8"));
+     const fileKey = Object.keys(bl).find(k => k !== 'total');
+     if (fileKey) {
+       const originalVal = bl[fileKey];
+       bl[fileKey] = originalVal + 1; // Raise baseline so actual < baseline
+       fs.writeFileSync(".testbaseline.json", JSON.stringify(bl, null, 2));
+       run("npx tsx scripts/testcount.ts");
+       bl[fileKey] = originalVal;
+       fs.writeFileSync(".testbaseline.json", JSON.stringify(bl, null, 2));
+     }
+  } catch(e) {
+     w.write(`ERROR checking baseline: ${e}\n`);
+  }
+
   // (f) npm test --run --reporter=verbose
   section("(f) npm test -- --run --reporter=verbose");
   run("npm test -- --run --reporter=verbose --testTimeout=30000");

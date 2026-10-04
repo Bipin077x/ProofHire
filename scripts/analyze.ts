@@ -1,6 +1,4 @@
 import fs from "fs";
-import net from "net";
-import dns from "dns/promises";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -13,21 +11,13 @@ async function main() {
     process.exit(1);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let resolveUrl: ((url: string) => Promise<any>) | undefined;
+
   if (offline) {
-    net.Socket.prototype.connect = () => { throw new Error("Offline mode - real socket blocked"); };
-    // @ts-ignore
-    dns.lookup = async (hostname) => {
-      if (hostname === "127.0.0.1" || hostname === "0177.0.0.1") return [{ address: hostname, family: 4 }];
-      if (hostname === "xn--ggle-0nda.com" || hostname === "microsoft-hiring.co") throw new Error("Offline mode");
-      return [{ address: "93.184.216.34", family: 4 }];
-    };
-    const originalFetch = global.fetch;
-    global.fetch = async (url: RequestInfo | URL, init?: RequestInit) => {
-      if (url.toString().includes("rdap.org")) {
-        return { ok: true, json: async () => ({ events: [{ eventAction: "registration", eventDate: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString() }] }), text: async () => JSON.stringify({ events: [{ eventAction: "registration", eventDate: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString() }] }) } as Response;
-      }
-      return originalFetch(url, init);
-    };
+    const { installOfflineMocks, createFakeResolve } = await import("../src/lib/testing/offlineDeps");
+    installOfflineMocks();
+    resolveUrl = createFakeResolve();
   }
 
   const { analyzePost } = await import("../src/lib/analyze");
@@ -36,7 +26,8 @@ async function main() {
   const result = await analyzePost(text, undefined, {
     searchProvider: {
       async search(_query: string) { return []; }
-    }
+    },
+    resolveUrl
   });
 
   if (regexOnly && result.claims) {

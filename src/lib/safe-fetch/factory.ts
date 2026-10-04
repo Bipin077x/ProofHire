@@ -26,6 +26,11 @@ export function isPrivateIp(ip: string, family: number): boolean {
     const lower = ip.toLowerCase();
     if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
     if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true;
+    if (lower.startsWith("ff")) return true; // ff00::/8
+    if (lower.startsWith("64:ff9b::")) return true; // 64:ff9b::/96
+    if (lower.startsWith("2002:")) return true; // 2002::/16
+    if (lower.startsWith("2001:")) return true; // 2001::/32
+    if (lower.startsWith("fec") || lower.startsWith("fed") || lower.startsWith("fee") || lower.startsWith("fef")) return true; // fec0::/10
     if (lower.startsWith("::ffff:")) {
       return isPrivateIp(lower.substring(7), 4);
     }
@@ -157,7 +162,7 @@ export function createSafeResolver(config: SafeResolverOptions) {
 
         const agent = new Agent({
           connect: {
-            lookup: (hostname: string, _options: dns.LookupOptions, callback: LookupCallback) => {
+            lookup: (hostname: string, lookupOptions: dns.LookupOptions, callback: LookupCallback) => {
               state.lookups++;
               config.dnsLookup(hostname, { all: true }).then((lookupRes: dns.LookupAddress[]) => {
                 if (lookupRes.length === 0) {
@@ -188,7 +193,11 @@ export function createSafeResolver(config: SafeResolverOptions) {
                   }
                 }
                 
-                callback(null, [validAddress!]);
+                if (lookupOptions.all) {
+                  callback(null, [validAddress!]);
+                } else {
+                  callback(null, validAddress!.address, validAddress!.family);
+                }
               }).catch(() => {
                 state.error = "dns_lookup_failed";
                 callback(new Error("dns_lookup_failed"), "");
@@ -210,31 +219,20 @@ export function createSafeResolver(config: SafeResolverOptions) {
             dispatcher: agent,
             signal: hopAc.signal,
             headers: {
-              "User-Agent": "ProofHireBot/1.0 (+contact-url)"
+              "User-Agent": "ProofHireBot/1.0 (+contact-url)",
+              ...(opts?.headers?.Accept ? { "Accept": opts.headers.Accept } : {})
             }
           });
-        } catch (e: unknown) {
-          clearTimeout(hopTimeout);
-          overallAc.signal.removeEventListener("abort", onOverallAbort);
-          if (state.blockedReason) {
-            return { finalUrl: currentUrlStr, chain, blocked: { reason: state.blockedReason, url: currentUrlStr } };
-          }
-          if (state.error) {
-            return { finalUrl: currentUrlStr, chain, error: state.error };
-          }
-          const err = e as { name?: string };
-          return { finalUrl: currentUrlStr, chain, error: err.name === "AbortError" ? "timeout" : "network_error" };
-        }
-
-        if (response.statusCode === 405 || response.statusCode === 501 || (response.statusCode >= 300 && response.statusCode < 400 && !response.headers.location)) {
-          try {
+          
+          if (response.statusCode === 405 || response.statusCode === 501 || (response.statusCode >= 300 && response.statusCode < 400 && !response.headers.location)) {
+            response.body.dump();
             response = await request(parsedUrl, {
-              method: opts?.method || "GET",
+              method: "GET",
               dispatcher: agent,
               signal: hopAc.signal,
               headers: {
                 "User-Agent": "ProofHireBot/1.0 (+contact-url)",
-                ...(opts?.headers || {})
+                ...(opts?.headers?.Accept ? { "Accept": opts.headers.Accept } : {})
               }
             });
             let bytesRead = 0;
@@ -258,36 +256,40 @@ export function createSafeResolver(config: SafeResolverOptions) {
             if (opts?.readBody && chunks.length > 0) {
               bodyText = Buffer.concat(chunks).toString("utf-8");
             }
-          } catch (e: unknown) {
-             clearTimeout(hopTimeout);
-             overallAc.signal.removeEventListener("abort", onOverallAbort);
-             const err = e as { name?: string };
-             return { finalUrl: currentUrlStr, chain, error: err.name === "AbortError" ? "timeout" : "network_error" };
+          } else {
+            response.body.dump();
           }
-        } else {
-          response.body.dump();
-        }
-        
-        clearTimeout(hopTimeout);
-        overallAc.signal.removeEventListener("abort", onOverallAbort);
+          
+          chain.push({ url: currentUrlStr, status: response.statusCode });
 
-        chain.push({ url: currentUrlStr, status: response.statusCode });
-
-        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-          const loc = Array.isArray(response.headers.location) ? response.headers.location[0] : response.headers.location;
-          currentUrlStr = new URL(loc as string, currentUrlStr).toString();
-        } else {
-          clearTimeout(overallTimeout);
-          return { finalUrl: currentUrlStr, chain, text: bodyText };
+          if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+            const loc = Array.isArray(response.headers.location) ? response.headers.location[0] : response.headers.location;
+            currentUrlStr = new URL(loc as string, currentUrlStr).toString();
+          } else {
+            return { finalUrl: currentUrlStr, chain, text: bodyText };
+          }
+        } catch (e: unknown) {
+          if (state.blockedReason) {
+            return { finalUrl: currentUrlStr, chain, blocked: { reason: state.blockedReason, url: currentUrlStr } };
+          }
+          if (state.error) {
+            return { finalUrl: currentUrlStr, chain, error: state.error };
+          }
+          const err = e as { name?: string };
+          return { finalUrl: currentUrlStr, chain, error: err.name === "AbortError" ? "timeout" : "network_error" };
+        } finally {
+          clearTimeout(hopTimeout);
+          overallAc.signal.removeEventListener("abort", onOverallAbort);
+          agent.destroy();
         }
       }
       
-      clearTimeout(overallTimeout);
       return { finalUrl: currentUrlStr, chain, error: "too_many_redirects", text: bodyText };
       
     } catch {
-      clearTimeout(overallTimeout);
       return { finalUrl: currentUrlStr, chain, error: "unexpected_error", text: bodyText };
+    } finally {
+      clearTimeout(overallTimeout);
     }
   };
 }

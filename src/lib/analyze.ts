@@ -32,39 +32,39 @@ export async function analyzePost(text: string, imageUrl?: string, deps?: Verifi
   }
 
   if (!claims.company) {
-    const domains: string[] = [];
-    if (claims.emails && claims.emails.length > 0) {
-       for (const email of claims.emails) {
-         try {
-           const parts = email.split('@');
-           if (parts.length > 1) domains.push(parts[1]);
-         } catch(e) {}
-       }
-    }
-    if (claims.urls && claims.urls.length > 0) {
-       for (const url of claims.urls) {
-         try {
-           const parsed = new URL(url.startsWith('http') ? url : 'https://' + url);
-           domains.push(parsed.hostname);
-         } catch(e) {}
-       }
-    }
+    const { inferCompanyFromText, resolveCompanyFromDomains } = await import("./verify/data/companies");
     
-    if (domains.length > 0) {
-       const { resolveCompanyFromDomains } = await import("./verify/data/companies");
-       const resolved = resolveCompanyFromDomains(domains);
-       if (resolved.company) {
-         claims.company = resolved.company.name;
-         claims.companySource = "inferred_from_domain";
-       }
-    }
-    
-    if (!claims.company) {
-      const { inferCompanyFromText } = await import("./verify/data/companies");
-      const inferred = inferCompanyFromText(text);
-      if (inferred.company) {
-        claims.company = inferred.company.name;
-        claims.companySource = "inferred_from_domain"; // technically inferred from text, but prompt said "Company Microsoft with companySource inferred_from_domain"
+    // 1. Try to find the name in the text first
+    const inferred = inferCompanyFromText(text);
+    if (inferred.company) {
+      claims.company = inferred.company.name;
+      claims.companySource = "named_in_post";
+    } else {
+      // 2. If no name found, look at domains
+      const domains: string[] = [];
+      if (claims.emails && claims.emails.length > 0) {
+         for (const email of claims.emails) {
+           try {
+             const parts = email.split('@');
+             if (parts.length > 1) domains.push(parts[1]);
+           } catch(e) {}
+         }
+      }
+      if (claims.urls && claims.urls.length > 0) {
+         for (const url of claims.urls) {
+           try {
+             const parsed = new URL(url.startsWith('http') ? url : 'https://' + url);
+             domains.push(parsed.hostname);
+           } catch(e) {}
+         }
+      }
+      
+      if (domains.length > 0) {
+         const resolved = resolveCompanyFromDomains(domains);
+         if (resolved.company) {
+           claims.company = resolved.company.name;
+           claims.companySource = "inferred_from_domain";
+         }
       }
     }
   }

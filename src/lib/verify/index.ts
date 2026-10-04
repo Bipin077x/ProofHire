@@ -18,6 +18,7 @@ export function runOfflineVerifiers(claims: ClaimsInput): VerifyResult[] {
 
 export interface VerificationDeps {
   searchProvider: SearchProvider;
+  resolveUrl?: (url: string) => Promise<import("../safe-fetch").SafeFetchResult>;
 }
 
 export async function runAllVerifiers(claims: ClaimsInput, deps: VerificationDeps): Promise<VerifyResult[]> {
@@ -25,7 +26,7 @@ export async function runAllVerifiers(claims: ClaimsInput, deps: VerificationDep
   
   const timeoutPromise = (name: string) => new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 15000));
   
-  const linkPromise = Promise.race([verifyLinks(claims), timeoutPromise("link")]);
+  const linkPromise = Promise.race([verifyLinks(claims, deps.resolveUrl), timeoutPromise("link")]);
   const rolePromise = Promise.race([verifyRole(claims, deps.searchProvider), timeoutPromise("role")]);
   
   const [linkRes, roleRes] = await Promise.allSettled([linkPromise, rolePromise]);
@@ -44,9 +45,21 @@ export async function runAllVerifiers(claims: ClaimsInput, deps: VerificationDep
     };
   };
 
-  return [
+  const mapped = [
     ...offline,
     mapResult(linkRes as PromiseSettledResult<VerifyResult>, "link"),
     mapResult(roleRes as PromiseSettledResult<VerifyResult>, "role")
   ];
+
+  const { getTemplate } = await import("../../content/copy");
+  for (const res of mapped) {
+    // Link evidence is a per-URL combined string from verifyLinks — keep it as-is
+    if (res.claim === "link") continue;
+    const template = getTemplate(res.ruleId);
+    if (template && template.evidence) {
+      res.evidence = template.evidence;
+    }
+  }
+
+  return mapped;
 }

@@ -9,7 +9,7 @@ const fixturesDir = path.join(__dirname, "../../../scripts/fixtures");
 const checkNoBannedWords = (obj: unknown) => {
   if (typeof obj === "string") {
     // word boundaries, case insensitive. 'unsafe' is allowed.
-    expect(obj).not.toMatch(/\b(safe|legit|genuine|100%)\b/i);
+    expect(obj).not.toMatch(/\b(safe|legit|genuine|100%|imperative)\b/i);
   } else if (Array.isArray(obj)) {
     obj.forEach(checkNoBannedWords);
   } else if (obj !== null && typeof obj === "object") {

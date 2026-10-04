@@ -62,7 +62,7 @@ export function verifyCompany(claims: CompanyClaims): VerifyResult {
     return {
       claim: "company",
       status: "VERIFIED",
-      evidence: isInferred ? "Inferred from the official domain in the link; the post does not name the company." : `Known brand (${company.name}) and contact/link matches official domains.`,
+      evidence: isInferred ? "Inferred from the official domain in the link; the post does not name the company." : "Named in the post.",
       sources: [{ label: "Careers Site", url: company.careersUrl }],
       nextAction: "No contradicting evidence found. Still verify through the company's official site.",
       limitations: "A real brand doesn't guarantee the specific role exists.",

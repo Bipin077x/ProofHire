@@ -1,0 +1,1541 @@
+gate-report.txt — generated at 2026-10-04T04:18:29.565Z
+
+======================================================================
+(a) git status --short; git log --oneline -5
+======================================================================
+ M .testbaseline.json
+ M .testcount.json
+ M scripts/analyze.ts
+ M scripts/fixtures/01_simple_scam.txt
+ M scripts/gate.ts
+ M src/app/api/analyze/__tests__/route.test.ts
+ M src/lib/__tests__/analyze.e2e.test.ts
+ M src/lib/__tests__/analyze.test.ts
+ M src/lib/__tests__/banned-words.test.ts
+ M src/lib/analyze.ts
+ M src/lib/extract/__tests__/regex.test.ts
+ M src/lib/extract/regex.ts
+ M src/lib/rollup/index.ts
+ M src/lib/safe-fetch/__tests__/safefetch.test.ts
+ M src/lib/safe-fetch/factory.ts
+ M src/lib/verify/__tests__/company.test.ts
+ M src/lib/verify/__tests__/link.test.ts
+ M src/lib/verify/company.ts
+ M src/lib/verify/index.ts
+ M src/lib/verify/link.ts
+ M src/lib/verify/payment.ts
+ M src/lib/verify/pressure.ts
+?? .gitattributes
+?? gate-report.txt
+?? scripts/fixtures/10_legit_with_contact.txt
+?? src/content/
+?? src/lib/testing/
+eb223dc gate fixes 2
+c918d8f Expand role regex (systems engineer, intern, etc.), update baseline to 219
+02a4326 Fix remaining issues: Tech Mahindra, fee wording false positives, link copy, fixture updates, baseline, gitignore db files
+c99253c gate fixes: lookalike links, pressure, copy, splitter
+130feb4 phase 4: api + persistence + privacy
+
+======================================================================
+(b) node -v and URL hostname one-liner
+======================================================================
+v24.11.1
+[::1] 127.0.0.1 127.0.0.1
+
+======================================================================
+(c) git diff --numstat HEAD~3 -- '*.test.ts' .testbaseline.json
+======================================================================
+21	20	.testbaseline.json
+12	10	src/app/api/analyze/__tests__/route.test.ts
+2	2	src/app/api/report/__tests__/route.test.ts
+127	87	src/lib/__tests__/analyze.e2e.test.ts
+7	5	src/lib/__tests__/analyze.test.ts
+13	17	src/lib/__tests__/banned-words.test.ts
+40	0	src/lib/extract/__tests__/regex.test.ts
+54	1	src/lib/safe-fetch/__tests__/safefetch.test.ts
+18	0	src/lib/verify/__tests__/company.test.ts
+28	2	src/lib/verify/__tests__/link.test.ts
+
+======================================================================
+(d) git grep -n -E allowPrivate|NODE_ENV|VITEST|process.env|bypass in safe-fetch non-test
+======================================================================
+Command failed: git grep -n -E "allowPrivate|NODE_ENV|VITEST|process\.env|bypass" -- src/lib/safe-fetch ":!src/lib/safe-fetch/__tests__"
+======================================================================
+(e) cat src/lib/safe-fetch/factory.ts
+======================================================================
+import { Agent, request, Dispatcher } from "undici";
+import dns from "dns";
+import net from "net";
+
+export interface SafeFetchResult {
+  finalUrl: string;
+  chain: { url: string; status: number }[];
+  blocked?: { reason: string; url: string };
+  error?: string;
+  text?: string;
+}
+
+function parseIpv4(ip: string): number {
+  const parts = ip.split(".");
+  return (
+    (parseInt(parts[0], 10) << 24) |
+    (parseInt(parts[1], 10) << 16) |
+    (parseInt(parts[2], 10) << 8) |
+    parseInt(parts[3], 10)
+  ) >>> 0;
+}
+
+export function isPrivateIp(ip: string, family: number): boolean {
+  if (family === 6) {
+    if (ip === "::1" || ip === "::") return true;
+    const lower = ip.toLowerCase();
+    if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
+    if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true;
+    if (lower.startsWith("ff")) return true; // ff00::/8
+    if (lower.startsWith("64:ff9b::")) return true; // 64:ff9b::/96
+    if (lower.startsWith("2002:")) return true; // 2002::/16
+    if (lower.startsWith("2001:")) return true; // 2001::/32
+    if (lower.startsWith("fec") || lower.startsWith("fed") || lower.startsWith("fee") || lower.startsWith("fef")) return true; // fec0::/10
+    if (lower.startsWith("::ffff:")) {
+      return isPrivateIp(lower.substring(7), 4);
+    }
+    return false;
+  }
+
+  if (family === 4) {
+    if (!net.isIPv4(ip)) return true;
+    const num = parseIpv4(ip);
+    
+    if (((num & 0xff000000) >>> 0) === 0x00000000) return true;
+    if (((num & 0xff000000) >>> 0) === 0x0a000000) return true;
+    if (((num & 0xffc00000) >>> 0) === 0x64400000) return true;
+    if (((num & 0xff000000) >>> 0) === 0x7f000000) return true;
+    if (((num & 0xffff0000) >>> 0) === 0xa9fe0000) return true;
+    if (((num & 0xfff00000) >>> 0) === 0xac100000) return true;
+    if (((num & 0xffffff00) >>> 0) === 0xc0000000) return true;
+    if (((num & 0xffff0000) >>> 0) === 0xc0a80000) return true;
+    if (((num & 0xfffe0000) >>> 0) === 0xc6120000) return true;
+    if (((num & 0xf0000000) >>> 0) === 0xe0000000) return true;
+    if (((num & 0xf0000000) >>> 0) === 0xf0000000) return true;
+    
+    return false;
+  }
+  
+  return true;
+}
+
+export interface SafeResolverOptions {
+  allowedPorts: number[];
+  dnsLookup: (hostname: string, options: dns.LookupOptions) => Promise<dns.LookupAddress[]>;
+  validateAddress?: (ip: string, family: number) => boolean;
+}
+
+type LookupCallback = (err: NodeJS.ErrnoException | null, address: string | dns.LookupAddress[], family?: number) => void;
+
+interface RequestOpts {
+  method?: string;
+  headers?: Record<string, string>;
+  readBody?: boolean;
+}
+
+export function createSafeResolver(config: SafeResolverOptions) {
+  const isValidAddress = config.validateAddress || ((ip, family) => !isPrivateIp(ip, family));
+
+  return async function safeResolve(urlStr: string, opts?: RequestOpts): Promise<SafeFetchResult> {
+    const chain: { url: string; status: number }[] = [];
+    let currentUrlStr = urlStr;
+    let bodyText: string | undefined;
+    
+    const overallAc = new AbortController();
+    const overallTimeout = setTimeout(() => overallAc.abort(), 12000);
+
+    try {
+      for (let hop = 0; hop < 5; hop++) {
+        let parsedUrl: URL;
+        try {
+          parsedUrl = new URL(currentUrlStr);
+        } catch {
+          clearTimeout(overallTimeout);
+          return { finalUrl: currentUrlStr, chain, error: "invalid_url" };
+        }
+
+        if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+          clearTimeout(overallTimeout);
+          return { finalUrl: currentUrlStr, chain, blocked: { reason: "unsupported_protocol", url: currentUrlStr } };
+        }
+        if (parsedUrl.username || parsedUrl.password) {
+          clearTimeout(overallTimeout);
+          return { finalUrl: currentUrlStr, chain, blocked: { reason: "credentials_in_url", url: currentUrlStr } };
+        }
+        
+        const portNum = parsedUrl.port ? parseInt(parsedUrl.port, 10) : (parsedUrl.protocol === "https:" ? 443 : 80);
+        if (!config.allowedPorts.includes(portNum)) {
+          clearTimeout(overallTimeout);
+          return { finalUrl: currentUrlStr, chain, blocked: { reason: "blocked_port", url: currentUrlStr } };
+        }
+        
+        let host = parsedUrl.hostname;
+        
+        let rawHost = host;
+        let isBracketed = false;
+        const rawHostMatch = currentUrlStr.match(/^https?:\/\/(?:[^@\/]+@)?(\[[^\]]+\]|[^:\/]+)/i);
+        if (rawHostMatch) {
+          const matched = rawHostMatch[1];
+          if (matched.startsWith('[') && matched.endsWith(']')) {
+            isBracketed = true;
+            rawHost = matched.slice(1, -1);
+          } else {
+            rawHost = matched;
+          }
+        }
+        
+        if (!isBracketed) {
+          const isDigitsAndDots = /^[0-9.]+$/.test(rawHost);
+          if (
+            /^0x/i.test(rawHost) || 
+            /^\d+$/.test(rawHost) || 
+            (isDigitsAndDots && /^0\d/.test(rawHost)) || 
+            (isDigitsAndDots && rawHost.match(/\./g) && rawHost.match(/\./g)!.length < 3 && net.isIPv4(host))
+          ) {
+            clearTimeout(overallTimeout);
+            return { finalUrl: currentUrlStr, chain, blocked: { reason: "non_canonical_ip", url: currentUrlStr } };
+          }
+        }
+
+        if (host.startsWith("[") && host.endsWith("]")) {
+          host = host.slice(1, -1);
+        }
+
+        if (net.isIP(host)) {
+          // Normalize IPv4-mapped IPv6
+          let checkIp = host;
+          let checkFamily = net.isIPv4(host) ? 4 : 6;
+          if (checkFamily === 6 && checkIp.toLowerCase().startsWith("::ffff:")) {
+             const v4Part = checkIp.substring(7);
+             if (net.isIPv4(v4Part)) {
+                 checkIp = v4Part;
+                 checkFamily = 4;
+             }
+          }
+          if (!isValidAddress(checkIp, checkFamily)) {
+            clearTimeout(overallTimeout);
+            return { finalUrl: currentUrlStr, chain, blocked: { reason: "private_ip", url: currentUrlStr } };
+          }
+        }
+
+        const state: { lookups: number; blockedReason?: string; error?: string } = { lookups: 0 };
+
+        const agent = new Agent({
+          connect: {
+            lookup: (hostname: string, lookupOptions: dns.LookupOptions, callback: LookupCallback) => {
+              state.lookups++;
+              config.dnsLookup(hostname, { all: true }).then((lookupRes: dns.LookupAddress[]) => {
+                if (lookupRes.length === 0) {
+                  state.error = "dns_lookup_failed";
+                  return callback(new Error("no_dns"), "");
+                }
+                
+                let validAddress: dns.LookupAddress | undefined = undefined;
+                
+                for (const res of lookupRes) {
+                  let addr = res.address;
+                  let fam = res.family;
+                  if (fam === 6 && addr.toLowerCase().startsWith("::ffff:")) {
+                    const v4Part = addr.substring(7);
+                    if (net.isIPv4(v4Part)) {
+                        addr = v4Part;
+                        fam = 4;
+                    }
+                  }
+                  
+                  if (!isValidAddress(addr, fam)) {
+                    state.blockedReason = "private_ip";
+                    return callback(new Error("private_ip"), "");
+                  }
+                  
+                  if (!validAddress) {
+                    validAddress = { address: addr, family: fam };
+                  }
+                }
+                
+                if (lookupOptions.all) {
+                  callback(null, [validAddress!]);
+                } else {
+                  callback(null, validAddress!.address, validAddress!.family);
+                }
+              }).catch(() => {
+                state.error = "dns_lookup_failed";
+                callback(new Error("dns_lookup_failed"), "");
+              });
+            }
+          }
+        });
+
+        const hopAc = new AbortController();
+        const hopTimeout = setTimeout(() => hopAc.abort(), 5000);
+        
+        const onOverallAbort = () => hopAc.abort();
+        overallAc.signal.addEventListener("abort", onOverallAbort);
+
+        let response: Dispatcher.ResponseData;
+        try {
+          response = await request(parsedUrl, {
+            method: "HEAD",
+            dispatcher: agent,
+            signal: hopAc.signal,
+            headers: {
+              "User-Agent": "ProofHireBot/1.0 (+contact-url)",
+              ...(opts?.headers?.Accept ? { "Accept": opts.headers.Accept } : {})
+            }
+          });
+          
+          if (response.statusCode === 405 || response.statusCode === 501 || (response.statusCode >= 300 && response.statusCode < 400 && !response.headers.location)) {
+            response.body.dump();
+            response = await request(parsedUrl, {
+              method: "GET",
+              dispatcher: agent,
+              signal: hopAc.signal,
+              headers: {
+                "User-Agent": "ProofHireBot/1.0 (+contact-url)",
+                ...(opts?.headers?.Accept ? { "Accept": opts.headers.Accept } : {})
+              }
+            });
+            let bytesRead = 0;
+            const chunks: Buffer[] = [];
+            for await (const chunk of response.body) {
+              const buf = chunk as Buffer;
+              bytesRead += buf.length;
+              if (opts?.readBody) {
+                chunks.push(buf);
+                if (bytesRead > 1048576) {
+                   response.body.destroy();
+                   break;
+                }
+              } else {
+                if (bytesRead > 65536) {
+                  response.body.destroy();
+                  break;
+                }
+              }
+            }
+            if (opts?.readBody && chunks.length > 0) {
+              bodyText = Buffer.concat(chunks).toString("utf-8");
+            }
+          } else {
+            response.body.dump();
+          }
+          
+          chain.push({ url: currentUrlStr, status: response.statusCode });
+
+          if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+            const loc = Array.isArray(response.headers.location) ? response.headers.location[0] : response.headers.location;
+            currentUrlStr = new URL(loc as string, currentUrlStr).toString();
+          } else {
+            return { finalUrl: currentUrlStr, chain, text: bodyText };
+          }
+        } catch (e: unknown) {
+          if (state.blockedReason) {
+            return { finalUrl: currentUrlStr, chain, blocked: { reason: state.blockedReason, url: currentUrlStr } };
+          }
+          if (state.error) {
+            return { finalUrl: currentUrlStr, chain, error: state.error };
+          }
+          const err = e as { name?: string };
+          return { finalUrl: currentUrlStr, chain, error: err.name === "AbortError" ? "timeout" : "network_error" };
+        } finally {
+          clearTimeout(hopTimeout);
+          overallAc.signal.removeEventListener("abort", onOverallAbort);
+          agent.destroy();
+        }
+      }
+      
+      return { finalUrl: currentUrlStr, chain, error: "too_many_redirects", text: bodyText };
+      
+    } catch {
+      return { finalUrl: currentUrlStr, chain, error: "unexpected_error", text: bodyText };
+    } finally {
+      clearTimeout(overallTimeout);
+    }
+  };
+}
+
+======================================================================
+(e2) cat src/lib/safe-fetch/index.ts
+======================================================================
+import { createSafeResolver } from "./factory";
+import type { SafeResolverOptions, SafeFetchResult } from "./factory";
+import dns from "dns";
+
+const defaultDnsLookup = (hostname: string, options: dns.LookupOptions): Promise<dns.LookupAddress[]> =>
+  dns.promises.lookup(hostname, options as dns.LookupAllOptions) as Promise<dns.LookupAddress[]>;
+
+const defaultOptions: SafeResolverOptions = {
+  allowedPorts: [80, 443],
+  dnsLookup: defaultDnsLookup
+};
+
+export const safeResolve = createSafeResolver(defaultOptions);
+export type { SafeResolverOptions, SafeFetchResult };
+
+======================================================================
+(e3) git grep -n createSafeResolver -- src :!src/lib/safe-fetch/__tests__
+======================================================================
+src/lib/safe-fetch/factory.ts:76:export function createSafeResolver(config: SafeResolverOptions) {
+src/lib/safe-fetch/index.ts:1:import { createSafeResolver } from "./factory";
+src/lib/safe-fetch/index.ts:13:export const safeResolve = createSafeResolver(defaultOptions);
+
+======================================================================
+(e4) git log --oneline --stat -- scripts/fixtures
+======================================================================
+eb223dc gate fixes 2
+ scripts/fixtures/01_simple_scam.txt            | 11 ++++++--
+ scripts/fixtures/02_legit_email.txt            |  8 ++++++
+ scripts/fixtures/06_legit_email.txt            | 11 ++++++--
+ scripts/fixtures/1_scam_data_entry.txt         |  1 +
+ scripts/fixtures/2_legit_software_engineer.txt |  1 +
+ scripts/fixtures/3_scam_fake_google.txt        |  1 +
+ scripts/fixtures/4_legit_startup.txt           |  1 +
+ scripts/fixtures/README.md                     | 38 +++++++++++++++++++++++++-
+ 8 files changed, 66 insertions(+), 6 deletions(-)
+02a4326 Fix remaining issues: Tech Mahindra, fee wording false positives, link copy, fixture updates, baseline, gitignore db files
+ scripts/fixtures/01_simple_scam.txt                           | 11 ++---------
+ scripts/fixtures/02_legit_email.txt                           |  8 --------
+ ...t_software_engineer.txt => 02_legit_software_engineer.txt} |  0
+ .../{3_scam_fake_google.txt => 03_scam_fake_google.txt}       |  0
+ .../fixtures/{4_legit_startup.txt => 04_legit_startup.txt}    |  0
+ scripts/fixtures/05_simple_scam.txt                           |  9 +++++++++
+ scripts/fixtures/06_legit_email.txt                           |  3 +++
+ .../fixtures/{03_mixed_signals.txt => 07_mixed_signals.txt}   |  0
+ .../{04_obfuscated_links.txt => 08_obfuscated_links.txt}      |  0
+ scripts/fixtures/{1_scam_data_entry.txt => 09_sample.txt}     |  0
+ scripts/fixtures/README.md                                    |  1 +
+ scripts/fixtures/sample.txt                                   |  1 -
+ 12 files changed, 15 insertions(+), 18 deletions(-)
+c99253c gate fixes: lookalike links, pressure, copy, splitter
+ scripts/fixtures/01_simple_scam.txt      | 9 +++++++++
+ scripts/fixtures/02_legit_email.txt      | 8 ++++++++
+ scripts/fixtures/03_mixed_signals.txt    | 7 +++++++
+ scripts/fixtures/04_obfuscated_links.txt | 5 +++++
+ scripts/fixtures/sample.txt              | 1 +
+ 5 files changed, 30 insertions(+)
+130feb4 phase 4: api + persistence + privacy
+ scripts/fixtures/1_scam_data_entry.txt         | 1 +
+ scripts/fixtures/2_legit_software_engineer.txt | 1 +
+ scripts/fixtures/3_scam_fake_google.txt        | 1 +
+ scripts/fixtures/4_legit_startup.txt           | 1 +
+ 4 files changed, 4 insertions(+)
+264f2d8 phase 1: extraction
+ scripts/fixtures/gmail.txt     | 1 +
+ scripts/fixtures/infosys.txt   | 4 ++++
+ scripts/fixtures/shortener.txt | 1 +
+ 3 files changed, 6 insertions(+)
+
+======================================================================
+(e5) git diff HEAD~3 -- .testbaseline.json
+======================================================================
+diff --git a/.testbaseline.json b/.testbaseline.json
+index f8577d7..7149dc8 100644
+--- a/.testbaseline.json
++++ b/.testbaseline.json
+@@ -1,22 +1,23 @@
+ {
+-  "src\\lib\\__tests__\\analyze.test.ts": 3,
+-  "src\\lib\\__tests__\\redact.test.ts": 18,
+-  "src\\lib\\extract\\__tests__\\builder.test.ts": 1,
+-  "src\\lib\\extract\\__tests__\\regex.test.ts": 26,
+-  "src\\lib\\safe-fetch\\__tests__\\safefetch.test.ts": 24,
+-  "src\\lib\\rollup\\__tests__\\rollup.test.ts": 14,
+-  "src\\lib\\verify\\__tests__\\companies.test.ts": 12,
+-  "src\\lib\\verify\\__tests__\\company.test.ts": 11,
+-  "src\\lib\\verify\\__tests__\\contact.test.ts": 14,
+-  "src\\lib\\verify\\__tests__\\domain.test.ts": 12,
+-  "src\\lib\\verify\\__tests__\\index.test.ts": 3,
+-  "src\\lib\\verify\\__tests__\\link.test.ts": 12,
+-  "src\\lib\\verify\\__tests__\\payment.test.ts": 17,
+-  "src\\lib\\verify\\__tests__\\pressure.test.ts": 12,
+-  "src\\lib\\verify\\__tests__\\role.test.ts": 5,
+-  "src\\app\\api\\passport\\__tests__\\route.test.ts": 3,
+-  "src\\app\\api\\report\\__tests__\\route.test.ts": 5,
+-  "src\\app\\api\\analyze\\__tests__\\route.test.ts": 11,
+-  "src\\lib\\__tests__\\analyze.e2e.test.ts": 8,
+-  "total": 211
++  "D:/ProofHire/src/lib/__tests__/analyze.e2e.test.ts": 10,
++  "D:/ProofHire/src/lib/__tests__/analyze.test.ts": 3,
++  "D:/ProofHire/src/lib/__tests__/banned-words.test.ts": 1,
++  "D:/ProofHire/src/lib/__tests__/redact.test.ts": 25,
++  "D:/ProofHire/src/lib/rollup/__tests__/rollup.test.ts": 15,
++  "D:/ProofHire/src/lib/extract/__tests__/builder.test.ts": 1,
++  "D:/ProofHire/src/lib/extract/__tests__/regex.test.ts": 40,
++  "D:/ProofHire/src/lib/verify/__tests__/companies.test.ts": 12,
++  "D:/ProofHire/src/lib/verify/__tests__/company.test.ts": 14,
++  "D:/ProofHire/src/lib/verify/__tests__/contact.test.ts": 14,
++  "D:/ProofHire/src/lib/verify/__tests__/domain.test.ts": 12,
++  "D:/ProofHire/src/lib/verify/__tests__/index.test.ts": 3,
++  "D:/ProofHire/src/lib/verify/__tests__/link.test.ts": 14,
++  "D:/ProofHire/src/lib/verify/__tests__/payment.test.ts": 19,
++  "D:/ProofHire/src/lib/verify/__tests__/pressure.test.ts": 14,
++  "D:/ProofHire/src/lib/verify/__tests__/role.test.ts": 5,
++  "D:/ProofHire/src/lib/safe-fetch/__tests__/safefetch.test.ts": 32,
++  "D:/ProofHire/src/app/api/analyze/__tests__/route.test.ts": 11,
++  "D:/ProofHire/src/app/api/report/__tests__/route.test.ts": 5,
++  "D:/ProofHire/src/app/api/passport/__tests__/route.test.ts": 3,
++  "total": 253
+ }
+\ No newline at end of file
+
+======================================================================
+(e6) run testcount with baseline lowered (actually raised to trigger failure)
+======================================================================
+--- Test Counts ---
+src/lib/__tests__/analyze.e2e.test.ts: 10 tests (10 passed, 0 failed, 0 skipped)
+src/lib/__tests__/analyze.test.ts: 3 tests (3 passed, 0 failed, 0 skipped)
+src/lib/__tests__/banned-words.test.ts: 1 tests (1 passed, 0 failed, 0 skipped)
+src/lib/__tests__/redact.test.ts: 25 tests (25 passed, 0 failed, 0 skipped)
+src/lib/extract/__tests__/builder.test.ts: 1 tests (1 passed, 0 failed, 0 skipped)
+src/lib/extract/__tests__/regex.test.ts: 40 tests (40 passed, 0 failed, 0 skipped)
+src/lib/safe-fetch/__tests__/safefetch.test.ts: 32 tests (32 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/companies.test.ts: 12 tests (12 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/company.test.ts: 14 tests (14 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/contact.test.ts: 14 tests (14 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/domain.test.ts: 12 tests (12 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/index.test.ts: 3 tests (3 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/link.test.ts: 14 tests (14 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/payment.test.ts: 19 tests (19 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/pressure.test.ts: 14 tests (14 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/role.test.ts: 5 tests (5 passed, 0 failed, 0 skipped)
+src/lib/rollup/__tests__/rollup.test.ts: 15 tests (15 passed, 0 failed, 0 skipped)
+src/app/api/analyze/__tests__/route.test.ts: 11 tests (11 passed, 0 failed, 0 skipped)
+src/app/api/report/__tests__/route.test.ts: 5 tests (5 passed, 0 failed, 0 skipped)
+src/app/api/passport/__tests__/route.test.ts: 3 tests (3 passed, 0 failed, 0 skipped)
+
+Total tests: 253 (253 passed, 0 failed, 0 skipped)
+
+======================================================================
+(f) npm test -- --run --reporter=verbose
+======================================================================
+
+> proofhire@0.1.0 test
+> vitest --run --reporter=verbose --testTimeout=30000
+
+
+[7m[1m[36m RUN [39m[22m[27m [36mv1.6.1[39m [90mD:/ProofHire[39m
+
+ [32m✓[39m src/lib/verify/__tests__/role.test.ts[2m > [22mRole Verifier[2m > [22mreturns VERIFIED on match
+ [32m✓[39m src/lib/verify/__tests__/role.test.ts[2m > [22mRole Verifier[2m > [22mreturns UNCLEAR when no match
+ [32m✓[39m src/lib/verify/__tests__/role.test.ts[2m > [22mRole Verifier[2m > [22mignores non-official results
+ [32m✓[39m src/lib/verify/__tests__/role.test.ts[2m > [22mRole Verifier[2m > [22mreturns UNCLEAR on missing role
+ [32m✓[39m src/lib/verify/__tests__/role.test.ts[2m > [22mRole Verifier[2m > [22mreturns UNCLEAR on provider error (no search key)
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('No fee for the course, pay ₹500 registration to confirm your seat.') => RISK
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('This is not a scam, pay Rs 999 to book your slot.') => RISK
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('No registration fee is charged.') => VERIFIED
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mRule 1: returns UNVERIFIED if transcript empty
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mRule 2: returns HIGH_RISK if payment RISK
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mRule 3: returns HIGH_RISK if >=2 RISK
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mRule 3 constraint: pressure RISK does not count
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mRule 4: returns CAUTION if exactly 1 core RISK
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mRule 5: returns UNVERIFIED if system.check_failed
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mRule 6: returns NO_RED_FLAGS_FOUND if payment, company, contact, link are all VERIFIED
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mRule 6 constraint: returns UNVERIFIED if missing one required VERIFIED
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mreturns CAUTION if only company is RISK
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mreturns UNVERIFIED if only 2 claims are VERIFIED and no RISK
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mreturns HIGH_RISK if company and link are RISK
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mreturns UNVERIFIED if contact is UNCLEAR and others VERIFIED
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mreturns UNVERIFIED if link is UNCLEAR and others VERIFIED
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mevaluates reports RISK correctly
+ [32m✓[39m src/lib/rollup/__tests__/rollup.test.ts[2m > [22mcalculateRollup[2m > [22mwhy string mentions at least one claim by name
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('We never ask candidates for money.') => VERIFIED
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('Training is free. Send ₹1,499 as refundable deposit.') => RISK
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('No interview needed, only a ₹300 kit charge.') => RISK
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('There is no fee to apply, and stipend is ₹35,000/month.') => VERIFIED
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('pay to confirm seat') => RISK
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mScam / Risk cases[2m > [22mreturns UNCLEAR for known brand without proof (email)
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mScam / Risk cases[2m > [22mreturns UNCLEAR for known brand without proof (url)
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mScam / Risk cases[2m > [22mreturns UNCLEAR for known brand without any contact
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mScam / Risk cases[2m > [22mreturns UNCLEAR for known brand with lookalike domain
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mScam / Risk cases[2m > [22mreturns UNCLEAR for unknown company
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mLegitimate cases[2m > [22mreturns VERIFIED for known brand with email proof
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mLegitimate cases[2m > [22mreturns VERIFIED for known brand with link proof
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mLegitimate cases[2m > [22mreturns VERIFIED for known brand with alternative official link
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mLegitimate cases[2m > [22mreturns VERIFIED for known brand with case insensitive official link
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('no fee is ever charged') => VERIFIED
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mLegitimate cases[2m > [22mreturns VERIFIED for alias resolution with official link
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mLegitimate cases[2m > [22mreturns VERIFIED and proper evidence for inferred company
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mEdge cases[2m > [22mhandles missing company
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mEdge cases[2m > [22mTech Mahindra named_in_post -> VERIFIED when official domain present
+ [32m✓[39m src/lib/verify/__tests__/company.test.ts[2m > [22mCompany Verifier[2m > [22mEdge cases[2m > [22mTech Mahindra without proof -> UNCLEAR
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('Normal job description with no payment request.') => VERIFIED
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('Stipend ₹35,000/month') => VERIFIED
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('Salary Rs. 4 LPA') => VERIFIED
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('refundable security deposit of ₹500') => RISK
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('training fee of INR 2000') => RISK
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mTable-driven cases[2m > [22mpayment('pay Rs 999 registration fee') => RISK
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mSentence Splitting Regressions[2m > [22mdoes not break on UPI ids (hr.google@ybl)
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mScam cases[2m > [22mflags lookalike domains as RISK
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mScam cases[2m > [22mflags microsoft-hiring.co as RISK even when DNS fails
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 01_simple_scam.txt
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mSentence Splitting Regressions[2m > [22mdoes not break on abbreviations like Rs.
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mUPI and edge cases[2m > [22mflags UPI requests extracted by regex
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mScam cases[2m > [22mflags shortener to unofficial domain as RISK
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mScam cases[2m > [22mflags IP literal domains as RISK
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mScam cases[2m > [22mflags new domains (< 90 days) as RISK
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 02_legit_email.txt
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mScam cases[2m > [22mflags suspicious TLDs as RISK
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mLegitimate & Unclear cases[2m > [22mverifies official domain
+ [32m✓[39m src/lib/verify/__tests__/payment.test.ts[2m > [22mPayment Verifier[2m > [22mUPI and edge cases[2m > [22mhandles empty transcript -> UNCLEAR
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 02_legit_software_engineer.txt
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mLegitimate & Unclear cases[2m > [22mverifies official domain even when DNS fails
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mLegitimate & Unclear cases[2m > [22mverifies shortener resolving to official domain
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mLegitimate & Unclear cases[2m > [22mreturns UNCLEAR for forms/chat hosts
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mLegitimate & Unclear cases[2m > [22mreturns UNCLEAR for unresolved URLs
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mLegitimate & Unclear cases[2m > [22mreturns UNCLEAR for recent domains (< 365 days)
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mLegitimate & Unclear cases[2m > [22mreturns UNCLEAR for unknown company
+ [32m✓[39m src/lib/verify/__tests__/link.test.ts[2m > [22mLink Verifier[2m > [22mLegitimate & Unclear cases[2m > [22mhandles RDAP failure without returning RISK (limitation noted)
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mTable tests[2m > [22mgiven Urgent hiring! We need 50 candidates today., returns UNCLEAR
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mTable tests[2m > [22mgiven walk-in interview for developers, returns UNCLEAR
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mTable tests[2m > [22mgiven we need immediate joining for this role, returns UNCLEAR
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mTable tests[2m > [22mgiven apply today or miss out, returns UNCLEAR
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mTable tests[2m > [22mgiven limited seats available, hurry up, returns UNCLEAR
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mTable tests[2m > [22mgiven last date today to register, returns UNCLEAR
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mTable tests[2m > [22mgiven pay now to confirm your slot, returns UNCLEAR
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mTable tests[2m > [22mgiven we offer 100% placement guarantee, returns UNCLEAR
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mTable tests[2m > [22mgiven We are looking for a software engineer to join our team., returns VERIFIED
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mTable tests[2m > [22mgiven Valid job description without any tactics., returns VERIFIED
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mTable tests[2m > [22mgiven Please submit your resume by Friday., returns VERIFIED
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mEdge cases[2m > [22mhandles missing transcript
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mEdge cases[2m > [22mdeduplicates found tactics
+ [32m✓[39m src/lib/verify/__tests__/pressure.test.ts[2m > [22mPressure Verifier[2m > [22mEdge cases[2m > [22mflags tactics passed from LLM extraction
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 03_scam_fake_google.txt
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 04_legit_startup.txt
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 05_simple_scam.txt
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 06_legit_email.txt
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mPhones[2m > [22mphone('+91 98765 43210') -> +91 98765 43210
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mPhones[2m > [22mphone('9876543210') -> 9876543210
+ [32m✓[39m src/lib/verify/__tests__/index.test.ts[2m > [22mrunAllVerifiers[2m > [22mruns all verifiers and returns array
+ [32m✓[39m src/lib/verify/__tests__/index.test.ts[2m > [22mrunAllVerifiers[2m > [22mhandles timeout or rejected promises as UNCLEAR
+ [32m✓[39m src/lib/verify/__tests__/index.test.ts[2m > [22mrunAllVerifiers[2m > [22mhandles hanging verifiers using fake timers
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 07_mixed_signals.txt
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 08_obfuscated_links.txt
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mPhones[2m > [22mphone('098765 43210') -> 098765 43210
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mPhones[2m > [22mphone('+91-98765-43210') -> +91-98765-43210
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mPhones[2m > [22mphone('Call 1234567890') -> null
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mPhones[2m > [22mphone('earn ₹35,000/month') -> null
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mPhones[2m > [22mphone('5987654321') -> null
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mPhones[2m > [22mphone('12345 67890') -> null
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 09_sample.txt
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 10_legit_with_contact.txt
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 1_scam_data_entry.txt
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 2_legit_software_engineer.txt
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mUPI[2m > [22mupi('Pay me at name@okaxis') -> name@okaxis
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mUPI[2m > [22mupi('9876543210@paytm') -> 9876543210@paytm
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mUPI[2m > [22mupi('Contact hr@infosys.com') -> null
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mUPI[2m > [22mupi('jobs@company.in') -> null
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mURLs[2m > [22murl('Apply at https://bit.ly/3xyz') -> https://bit.ly/3xyz
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mURLs[2m > [22murl('http://rb.gy/abc') -> http://rb.gy/abc
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 3_scam_fake_google.txt
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on 4_legit_startup.txt
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on gmail.txt
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on infosys.txt
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mno phone/email/UPI/long-digit survives on shortener.txt
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22msame salt gives same hash
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mdifferent salt gives different hash
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22m+91 98765 43210 and 9876543210 hash identically
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22m9876543210 and 9876543210 hash identically
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22m098765 43210 and 9876543210 hash identically
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mHMAC (not plain SHA) is used
+ [32m✓[39m src/lib/__tests__/redact.test.ts[2m > [22mRedaction and Indicator Extraction[2m > [22mserver startup fails when INDICATOR_SALT is unset and NODE_ENV=production
+ [32m✓[39m src/lib/__tests__/analyze.test.ts[2m > [22manalyzePost[2m > [22mTest 1 (Scam): Expect rollup HIGH_RISK
+ [32m✓[39m src/lib/__tests__/analyze.test.ts[2m > [22manalyzePost[2m > [22mTest 2 (Legit): Expect rollup UNVERIFIED if no verifiers exist for unknown company
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mURLs[2m > [22murl('short.link/apply') -> http://short.link/apply
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mURLs[2m > [22murl('Visit www.google.com') -> http://www.google.com
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('pay Rs 999 registration') -> true
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('₹500 registration fee') -> true
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('Rs. 999 to confirm') -> true
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('INR 1,500 deposit') -> true
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('₹500 refundable security deposit') -> true
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('send 1,499 to confirm your seat') -> true
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('training fee of INR 2000') -> true
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('stipend ₹35,000/month') -> false
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('salary Rs. 4 LPA') -> false
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('no fee is ever charged') -> false
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('we never ask candidates for money') -> false
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('Send email to hr@company.com') -> false
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('Send Rs 500 to hr@ybl') -> true
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('send ₹999 registration fee') -> true
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFee Wording[2m > [22mfee('transfer 500 to confirm') -> true
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mRole Extraction[2m > [22mextractRole('We are hiring a Systems Engineer') -> Systems Engineer
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mRole Extraction[2m > [22mextractRole('Looking for an intern to join us') -> intern
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mRole Extraction[2m > [22mextractRole('Data Entry Clerk position available') -> Data Entry
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mRole Extraction[2m > [22mextractRole('Please fill out the application form') -> null
+ [32m✓[39m src/lib/__tests__/analyze.test.ts[2m > [22manalyzePost[2m > [22mhandles extraction failures
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mdefault safeResolve rejects non-standard ports and private IPs
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://2130706433' with 'non_canonical_ip'
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mRole Extraction[2m > [22mextractRole('We are a recruitment agency') -> null
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mRole Extraction[2m > [22mextractRole('Contact us for more information') -> null
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mEmails[2m > [22memail('Contact hr@scam.com') -> hr@scam.com
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mEmails[2m > [22memail('john.doe@gmail.com') -> john.doe@gmail.com
+ [32m✓[39m src/lib/extract/__tests__/regex.test.ts[2m > [22mRegex Extraction[2m > [22mFixture Encoding[2m > [22mpreserves ₹ symbol when reading UTF-8 files
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mScam / Risk cases[2m > [22mflags free-mail with known company
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mScam / Risk cases[2m > [22mflags free-mail proton with known company
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mScam / Risk cases[2m > [22mflags lookalike domains
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mScam / Risk cases[2m > [22mflags hyphenated lookalike domains
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mScam / Risk cases[2m > [22mflags punycode lookalike domains
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mLegitimate cases[2m > [22mverifies official email domain
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mLegitimate cases[2m > [22mverifies official secondary email domain
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mLegitimate cases[2m > [22mverifies official subdomain
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mLegitimate cases[2m > [22mverifies official domain with casing differences
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mLegitimate cases[2m > [22mverifies official domain when company alias is provided
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mEdge cases[2m > [22mreturns UNCLEAR for unknown company with email
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mEdge cases[2m > [22mreturns UNCLEAR for phone only
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mEdge cases[2m > [22mhandles missing contact
+ [32m✓[39m src/lib/verify/__tests__/contact.test.ts[2m > [22mContact Verifier[2m > [22mEdge cases[2m > [22mflags reserved/example domains as placeholder (UNCLEAR)
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://0x7f000001' with 'non_canonical_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://0177.0.0.1' with 'non_canonical_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://127.1' with 'non_canonical_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://[::1]' with 'private_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://[::ffff:127.0.0.1]' with 'private_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://[::ffff:7f00:1]' with 'private_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://[0:0:0:0:0:ffff:127.0.0.1]' with 'private_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://[::ffff:127.1]' with 'invalid_url'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://[0000:0000:0000:0000:0000:ffff…' with 'private_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://169.254.169.254/latest/meta-da…' with 'private_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://user:pass@example.com' with 'credentials_in_url'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'ftp://x' with 'unsupported_protocol'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'file:///etc/passwd' with 'unsupported_protocol'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://[ff01::1]' with 'private_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://[64:ff9b::1]' with 'private_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://[2002::1]' with 'private_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://[2001::1]' with 'private_ip'
+ [32m✓[39m src/lib/__tests__/analyze.e2e.test.ts[2m > [22mEnd-to-End Analysis (regex-only)[2m > [22m01_simple_scam -> HIGH_RISK, payment RISK, contact RISK, link RISK
+ [32m✓[39m src/lib/__tests__/analyze.e2e.test.ts[2m > [22mEnd-to-End Analysis (regex-only)[2m > [22m06_legit_email -> UNVERIFIED, no RISK rows, payment+company+link VERIFIED, contact UNCLEAR (no email in original)
+ [32m✓[39m src/lib/__tests__/analyze.e2e.test.ts[2m > [22mEnd-to-End Analysis (regex-only)[2m > [22m03_scam_fake_google -> HIGH_RISK, payment RISK
+ [32m✓[39m src/lib/__tests__/analyze.e2e.test.ts[2m > [22mEnd-to-End Analysis (regex-only)[2m > [22m04_legit_startup -> UNVERIFIED, no RISK row
+ [32m✓[39m src/lib/__tests__/analyze.e2e.test.ts[2m > [22mEnd-to-End Analysis (regex-only)[2m > [22m07_mixed_signals -> HIGH_RISK, payment RISK, pressure UNCLEAR, link RISK
+ [32m✓[39m src/lib/__tests__/analyze.e2e.test.ts[2m > [22mEnd-to-End Analysis (regex-only)[2m > [22m10_legit_with_contact -> NO_RED_FLAGS_FOUND
+ [32m✓[39m src/lib/__tests__/analyze.e2e.test.ts[2m > [22mEnd-to-End Analysis (regex-only)[2m > [22m08_obfuscated_links -> HIGH_RISK, link RISK for IPs, contact RISK, 007.com not blocked
+ [32m✓[39m src/lib/__tests__/analyze.e2e.test.ts[2m > [22mEnd-to-End Analysis (regex-only)[2m > [22m09_sample -> HIGH_RISK
+ [32m✓[39m src/lib/__tests__/analyze.e2e.test.ts[2m > [22mEnd-to-End Analysis (regex-only)[2m > [22mshortener, gmail -> never NO_RED_FLAGS_FOUND
+ [32m✓[39m src/lib/__tests__/analyze.e2e.test.ts[2m > [22mEnd-to-End Analysis (regex-only)[2m > [22minfosys -> never HIGH_RISK/CAUTION
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://[fec0::1]' with 'private_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mblocks 'http://[fed0::1]' with 'private_ip'
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mIP Literals & Bad Protocols[2m > [22mdoes not block 007.com as non_canonical_ip
+ [32m✓[39m src/app/api/report/__tests__/route.test.ts[2m > [22mPOST /api/report[2m > [22mvalid report -> 200 and reportCount incremented
+ [32m✓[39m src/app/api/report/__tests__/route.test.ts[2m > [22mPOST /api/report[2m > [22msame reporter + same indicator within 24h -> 200 and count unchanged
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mDNS Pinning[2m > [22mlookup called once per hop, uses first IP even if DNS changes later
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mDNS Pinning[2m > [22mhostname returning [public, private] together is blocked (ANY private blocks)
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mDNS Pinning[2m > [22mconcurrency test: simultaneous resolves maintain independent state
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mDNS Pinning[2m > [22mlookup honors options.all false (single address)
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mDNS Pinning[2m > [22muses fixed User-Agent and allowlisted Accept only
+ [32m✓[39m src/app/api/report/__tests__/route.test.ts[2m > [22mPOST /api/report[2m > [22mnote > 300 chars -> 400
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mRedirect behaviors (Real Server)[2m > [22mfollows relative Location header correctly
+ [32m✓[39m src/app/api/report/__tests__/route.test.ts[2m > [22mPOST /api/report[2m > [22mnote containing a phone number is stored redacted
+ [32m✓[39m src/app/api/report/__tests__/route.test.ts[2m > [22mPOST /api/report[2m > [22munknown passportId -> 404
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mRedirect behaviors (Real Server)[2m > [22mstops on redirect loops (too_many_redirects)
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mRedirect behaviors (Real Server)[2m > [22mblocks 6-hop chain with too_many_redirects
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mRedirect behaviors (Real Server)[2m > [22mblocks public URL redirecting to private IP at hop 2
+ [32m✓[39m src/lib/safe-fetch/__tests__/safefetch.test.ts[2m > [22msafeFetch[2m > [22mRedirect behaviors (Real Server)[2m > [22mblocks redirect pointing to different scheme
+ [32m✓[39m src/app/api/analyze/__tests__/route.test.ts[2m > [22mAnalyze API Route[2m > [22mvalid text -> 200 and a passport id
+ [32m✓[39m src/app/api/analyze/__tests__/route.test.ts[2m > [22mAnalyze API Route[2m > [22m11th request in a minute -> 429 with Retry-After
+ [32m✓[39m src/app/api/analyze/__tests__/route.test.ts[2m > [22mAnalyze API Route[2m > [22mprompt-injection text never yields NO_RED_FLAGS_FOUND
+ [32m✓[39m src/app/api/analyze/__tests__/route.test.ts[2m > [22mAnalyze API Route[2m > [22mimage > 5MB -> 413
+ [32m✓[39m src/app/api/analyze/__tests__/route.test.ts[2m > [22mAnalyze API Route[2m > [22mPNG magic bytes with a .jpg name -> accepted; an exe renamed .png -> 415
+ [32m✓[39m src/app/api/analyze/__tests__/route.test.ts[2m > [22mAnalyze API Route[2m > [22mafter the scam fixture is reported once, a second scan with the same UPI shows the reports UNCLEAR row
+ [32m✓[39m src/app/api/analyze/__tests__/route.test.ts[2m > [22mAnalyze API Route[2m > [22m3 distinct reports -> RISK
+ [32m✓[39m src/app/api/analyze/__tests__/route.test.ts[2m > [22mAnalyze API Route[2m > [22m5 reports from same IP counts as 1, so UNCLEAR
+ [32m✓[39m src/app/api/analyze/__tests__/route.test.ts[2m > [22mAnalyze API Route[2m > [22minfosys.com reported 10 times -> not RISK, gmail.com reported 10 times -> not RISK
+ [32m✓[39m src/app/api/analyze/__tests__/route.test.ts[2m > [22mAnalyze API Route[2m > [22mthe 11th report from one IP in 24h -> rejected
+ [32m✓[39m src/app/api/analyze/__tests__/route.test.ts[2m > [22mAnalyze API Route[2m > [22mmissing ANTHROPIC_API_KEY -> regex-only passport with extractionMode 'regex-only'
+ [32m✓[39m src/lib/verify/__tests__/domain.test.ts[2m > [22mDomain Verifier[2m > [22mextracts registrable domain
+ [32m✓[39m src/lib/verify/__tests__/domain.test.ts[2m > [22mDomain Verifier[2m > [22misOfficial careers.google.com google -> true
+ [32m✓[39m src/lib/verify/__tests__/domain.test.ts[2m > [22mDomain Verifier[2m > [22misOfficial Careers.GOOGLE.com google -> true
+ [32m✓[39m src/lib/verify/__tests__/domain.test.ts[2m > [22mDomain Verifier[2m > [22misOfficial google.com.evil.in google -> false
+ [32m✓[39m src/lib/verify/__tests__/domain.test.ts[2m > [22mDomain Verifier[2m > [22misOfficial mygoogle.com google -> false
+ [32m✓[39m src/lib/verify/__tests__/domain.test.ts[2m > [22mDomain Verifier[2m > [22misLookalike g00gle-careers.in google -> true
+ [32m✓[39m src/lib/verify/__tests__/domain.test.ts[2m > [22mDomain Verifier[2m > [22misLookalike microsoft-hiring.co microsoft -> true
+ [32m✓[39m src/lib/verify/__tests__/domain.test.ts[2m > [22mDomain Verifier[2m > [22misLookalike xn--ggle-0nda.com google -> true
+ [32m✓[39m src/lib/verify/__tests__/domain.test.ts[2m > [22mDomain Verifier[2m > [22misLookalike g0ogle.com google -> true
+ [32m✓[39m src/lib/verify/__tests__/domain.test.ts[2m > [22mDomain Verifier[2m > [22misLookalike google-support.in google -> true
+ [32m✓[39m src/lib/verify/__tests__/domain.test.ts[2m > [22mDomain Verifier[2m > [22misLookalike apple.com.evil.in apple -> true
+ [32m✓[39m src/lib/verify/__tests__/domain.test.ts[2m > [22mDomain Verifier[2m > [22misLookalike amazon-jobs.org amazon -> true
+ [32m✓[39m src/app/api/passport/__tests__/route.test.ts[2m > [22mGET /api/passport/[id][2m > [22mvalid id -> 200 redacted passport
+ [32m✓[39m src/app/api/passport/__tests__/route.test.ts[2m > [22mGET /api/passport/[id][2m > [22munknown id -> 404
+ [32m✓[39m src/app/api/passport/__tests__/route.test.ts[2m > [22mGET /api/passport/[id][2m > [22mmalformed id -> 400
+ [32m✓[39m src/lib/extract/__tests__/builder.test.ts[2m > [22mPrompt Builder[2m > [22mwraps text input in <UNTRUSTED_POST> tags to prevent prompt injection
+ [32m✓[39m src/lib/verify/__tests__/companies.test.ts[2m > [22mCompanies Data[2m > [22mresolveCompany[2m > [22mresolves 'Google' -> Google
+ [32m✓[39m src/lib/verify/__tests__/companies.test.ts[2m > [22mCompanies Data[2m > [22mresolveCompany[2m > [22mresolves 'alphabet' -> Google
+ [32m✓[39m src/lib/verify/__tests__/companies.test.ts[2m > [22mCompanies Data[2m > [22mresolveCompany[2m > [22mresolves 'ms' -> Microsoft
+ [32m✓[39m src/lib/verify/__tests__/companies.test.ts[2m > [22mCompanies Data[2m > [22mresolveCompany[2m > [22mresolves 'TCS' -> TCS
+ [32m✓[39m src/lib/verify/__tests__/companies.test.ts[2m > [22mCompanies Data[2m > [22mresolveCompany[2m > [22mresolves 'Microsooft' -> Microsoft
+ [32m✓[39m src/lib/verify/__tests__/companies.test.ts[2m > [22mCompanies Data[2m > [22mresolveCompany[2m > [22mresolves 'Googl' -> Google
+ [32m✓[39m src/lib/verify/__tests__/companies.test.ts[2m > [22mCompanies Data[2m > [22mresolveCompany[2m > [22mresolves 'Accnture' -> Accenture
+ [32m✓[39m src/lib/verify/__tests__/companies.test.ts[2m > [22mCompanies Data[2m > [22mresolveCompany[2m > [22mresolves 'Unknown Startup LLC' -> null
+ [32m✓[39m src/lib/verify/__tests__/companies.test.ts[2m > [22mCompanies Data[2m > [22mresolveCompany[2m > [22mresolves 'm' -> null
+ [32m✓[39m src/lib/verify/__tests__/companies.test.ts[2m > [22mCompanies Data[2m > [22mresolveCompanyFromDomains[2m > [22mresolves domain [ 'google.com' ] -> Google
+ [32m✓[39m src/lib/verify/__tests__/companies.test.ts[2m > [22mCompanies Data[2m > [22mresolveCompanyFromDomains[2m > [22mresolves domain [ 'careers.microsoft.com', 'microsoft.com' ] -> Microsoft
+ [32m✓[39m src/lib/verify/__tests__/companies.test.ts[2m > [22mCompanies Data[2m > [22mresolveCompanyFromDomains[2m > [22mresolves domain [ 'unknown.com' ] -> null
+ [32m✓[39m src/lib/__tests__/banned-words.test.ts[2m > [22mBanned Words Scanner[2m > [22mscans all fixtures for banned words in evidence, nextAction, limitations, why[33m 5285[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m20 passed[39m[22m[90m (20)[39m
+[2m      Tests [22m [1m[32m253 passed[39m[22m[90m (253)[39m
+[2m   Start at [22m 09:49:23
+[2m   Duration [22m 15.45s[2m (transform 1.38s, setup 1.40s, collect 4.46s, tests 106.71s, environment 4ms, prepare 4.90s)[22m
+
+
+> proofhire@0.1.0 posttest
+> npm run testcount
+
+
+> proofhire@0.1.0 testcount
+> tsx scripts/testcount.ts
+
+--- Test Counts ---
+src/lib/__tests__/analyze.e2e.test.ts: 10 tests (10 passed, 0 failed, 0 skipped)
+src/lib/__tests__/analyze.test.ts: 3 tests (3 passed, 0 failed, 0 skipped)
+src/lib/__tests__/banned-words.test.ts: 1 tests (1 passed, 0 failed, 0 skipped)
+src/lib/__tests__/redact.test.ts: 25 tests (25 passed, 0 failed, 0 skipped)
+src/lib/extract/__tests__/builder.test.ts: 1 tests (1 passed, 0 failed, 0 skipped)
+src/lib/extract/__tests__/regex.test.ts: 40 tests (40 passed, 0 failed, 0 skipped)
+src/lib/rollup/__tests__/rollup.test.ts: 15 tests (15 passed, 0 failed, 0 skipped)
+src/lib/safe-fetch/__tests__/safefetch.test.ts: 32 tests (32 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/companies.test.ts: 12 tests (12 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/company.test.ts: 14 tests (14 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/contact.test.ts: 14 tests (14 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/domain.test.ts: 12 tests (12 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/index.test.ts: 3 tests (3 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/link.test.ts: 14 tests (14 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/payment.test.ts: 19 tests (19 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/pressure.test.ts: 14 tests (14 passed, 0 failed, 0 skipped)
+src/lib/verify/__tests__/role.test.ts: 5 tests (5 passed, 0 failed, 0 skipped)
+src/app/api/analyze/__tests__/route.test.ts: 11 tests (11 passed, 0 failed, 0 skipped)
+src/app/api/passport/__tests__/route.test.ts: 3 tests (3 passed, 0 failed, 0 skipped)
+src/app/api/report/__tests__/route.test.ts: 5 tests (5 passed, 0 failed, 0 skipped)
+
+Total tests: 253 (253 passed, 0 failed, 0 skipped)
+
+======================================================================
+(g) npx tsc --noEmit; npm run lint
+======================================================================
+src/lib/__tests__/analyze.e2e.test.ts(68,3): error TS2322: Type '(urlStr: string) => Promise<{ finalUrl: string; chain: { url: string; status: number; }[]; text: string; blocked?: undefined; error?: undefined; } | { finalUrl: string; chain: { url: string; status: number; }[]; blocked: { ...; }; text?: undefined; error?: undefined; } | { ...; }>' is not assignable to type '(url: string) => Promise<SafeFetchResult>'.
+  Type 'Promise<{ finalUrl: string; chain: { url: string; status: number; }[]; text: string; blocked?: undefined; error?: undefined; } | { finalUrl: string; chain: { url: string; status: number; }[]; blocked: { reason: string; url: string; }; text?: undefined; error?: undefined; } | { ...; }>' is not assignable to type 'Promise<SafeFetchResult>'.
+    Type '{ finalUrl: string; chain: { url: string; status: number; }[]; text: string; blocked?: undefined; error?: undefined; } | { finalUrl: string; chain: { url: string; status: number; }[]; blocked: { reason: string; url: string; }; text?: undefined; error?: undefined; } | { ...; }' is not assignable to type 'SafeFetchResult'.
+      Type '{ error: string; chain: { url: string; status: number; }[]; finalUrl?: undefined; text?: undefined; blocked?: undefined; }' is not assignable to type 'SafeFetchResult'.
+        Types of property 'finalUrl' are incompatible.
+          Type 'undefined' is not assignable to type 'string'.
+
+> proofhire@0.1.0 lint
+> eslint .
+
+
+D:\ProofHire\scripts\analyze.ts
+  14:45  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+D:\ProofHire\src\app\api\analyze\__tests__\route.test.ts
+  43:16  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  50:14  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  53:48  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+✖ 4 problems (4 errors, 0 warnings)
+
+
+======================================================================
+(h) All fixtures: cat + analyze --regex-only --offline
+======================================================================
+
+----- 01_simple_scam.txt -----
+[CONTENT]
+Hello,
+
+We are pleased to inform you that you have been selected for the Data Entry position at Google India.
+Your daily salary will be Rs 2,500.
+
+Please pay a refundable registration fee of ₹500 via UPI to hr.google@ybl to confirm your slot.
+Contact us at 9876543210 or careers@google.com.evil.in for queries.
+
+Visit http://xn--ggle-0nda.com/careers for more info.
+
+[ANALYSIS]
+Verdict: HIGH_RISK
+Why: Payment: a fee or deposit was requested.; Contact: email domain (google.com.evil.in) is a lookalike of official domains.; Link: the link uses a misleading punycode domain.
+
+EXTRACTED:
+{
+  "transcript": "Hello,\n\nWe are pleased to inform you that you have been selected for the Data Entry position at Google India.\nYour daily salary will be Rs 2,500.\n\nPlease pay a refundable registration fee of ₹500 via UPI to hr.google@ybl to confirm your slot.\nContact us at 9876543210 or careers@google.com.evil.in for queries.\n\nVisit http://xn--ggle-0nda.com/careers for more info.\n",
+  "company": "Google",
+  "role": "Data Entry",
+  "emails": [
+    "careers@google.com.evil.in"
+  ],
+  "phones": [
+    "9876543210"
+  ],
+  "urls": [
+    "http://xn--ggle-0nda.com/careers"
+  ],
+  "payment": {
+    "requested": true,
+    "method": "hr.google@ybl",
+    "wording": "pay a refundable registration fee of ₹500 via UPI to hr"
+  },
+  "pressureTactics": [
+    "confirm your slot"
+  ],
+  "confidence": {},
+  "extractionMode": "regex-only",
+  "companySource": "named_in_post"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | RISK | payment.fee_request | A fee or deposit was requested. | Do not pay. Report this post.
+contact | RISK | contact.email_lookalike | Email domain (google.com.evil.in) is a lookalike of official domains. | Do not contact. Likely a phishing attempt.
+company | UNCLEAR | company.known_without_proof | A real brand is named, but no proof of affiliation is provided. | Verify through official channels.
+pressure | UNCLEAR | pressure.tactics_found | Pressure or guaranteed-job tactics detected: confirm your slot. | Evaluate cautiously. Scammers create false urgency.
+link | RISK | link.punycode | xn--ggle-0nda.com (punycode domain targeting known brand) | 
+role | UNCLEAR | role.not_found | Not found in the sources we checked. Many real internships are not publicly listed. | 
+
+----- 02_legit_email.txt -----
+[CONTENT]
+﻿Thank you for applying.
+
+We would like to schedule an interview for the Software Engineer role.
+There are no fees associated with our recruitment process.
+
+Best,
+Talent Acquisition
+Careers.GOOGLE.com
+
+[ANALYSIS]
+Verdict: UNVERIFIED
+Why: Contact: no contact email or phone was provided.; Role: not found in the sources we checked. many real internships are not publicly listed.
+
+EXTRACTED:
+{
+  "transcript": "﻿Thank you for applying.\r\n\r\nWe would like to schedule an interview for the Software Engineer role.\r\nThere are no fees associated with our recruitment process.\r\n\r\nBest,\r\nTalent Acquisition\r\nCareers.GOOGLE.com\r\n",
+  "company": "Google",
+  "role": "Software Engineer",
+  "emails": [],
+  "phones": [],
+  "urls": [
+    "http://Careers.GOOGLE.com"
+  ],
+  "payment": {
+    "requested": false
+  },
+  "pressureTactics": [],
+  "confidence": {},
+  "extractionMode": "regex-only",
+  "companySource": "named_in_post"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | VERIFIED | payment.no_fee | No fee wording or payment requests detected. | Proceed carefully.
+contact | UNCLEAR | contact.missing | No contact email or phone was provided. | Verify contact methods.
+company | VERIFIED | company.known_with_proof | Named in the post. | No contradicting evidence found. Still verify through the company's official site.
+pressure | VERIFIED | pressure.no_tactics | No pressure language detected in provided text. | Normal evaluation.
+link | VERIFIED | link.official_domain | Domain matches the company's official site; destination was not checked. | 
+role | UNCLEAR | role.not_found | Not found in the sources we checked. Many real internships are not publicly listed. | 
+
+----- 02_legit_software_engineer.txt -----
+[CONTENT]
+We are hiring a software engineer at Microsoft. Apply at careers.microsoft.com. No fee is required.
+
+[ANALYSIS]
+Verdict: UNVERIFIED
+Why: Contact: no contact email or phone was provided.; Role: not found in the sources we checked. many real internships are not publicly listed.
+
+EXTRACTED:
+{
+  "transcript": "We are hiring a software engineer at Microsoft. Apply at careers.microsoft.com. No fee is required.\n",
+  "company": "Microsoft",
+  "role": "software engineer",
+  "emails": [],
+  "phones": [],
+  "urls": [
+    "http://careers.microsoft.com"
+  ],
+  "payment": {
+    "requested": false
+  },
+  "pressureTactics": [],
+  "confidence": {},
+  "extractionMode": "regex-only",
+  "companySource": "named_in_post"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | VERIFIED | payment.no_fee | No fee wording or payment requests detected. | Proceed carefully.
+contact | UNCLEAR | contact.missing | No contact email or phone was provided. | Verify contact methods.
+company | VERIFIED | company.known_with_proof | Named in the post. | No contradicting evidence found. Still verify through the company's official site.
+pressure | VERIFIED | pressure.no_tactics | No pressure language detected in provided text. | Normal evaluation.
+link | VERIFIED | link.official_domain | Domain matches the company's official site; destination was not checked. | 
+role | UNCLEAR | role.not_found | Not found in the sources we checked. Many real internships are not publicly listed. | 
+
+----- 03_scam_fake_google.txt -----
+[CONTENT]
+Google is hiring! Send resume to hr@g00gle-careers.in. Refundable deposit of ₹500 required for laptop.
+
+[ANALYSIS]
+Verdict: HIGH_RISK
+Why: Payment: a fee or deposit was requested.; Contact: email domain (g00gle-careers.in) is a lookalike of official domains.
+
+EXTRACTED:
+{
+  "transcript": "Google is hiring! Send resume to hr@g00gle-careers.in. Refundable deposit of ₹500 required for laptop.\n",
+  "company": "Google",
+  "emails": [
+    "hr@g00gle-careers.in"
+  ],
+  "phones": [],
+  "urls": [],
+  "payment": {
+    "requested": true,
+    "wording": "deposit of ₹500 required for laptop"
+  },
+  "pressureTactics": [],
+  "confidence": {},
+  "extractionMode": "regex-only",
+  "companySource": "named_in_post"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | RISK | payment.fee_request | A fee or deposit was requested. | Do not pay. Report this post.
+contact | RISK | contact.email_lookalike | Email domain (g00gle-careers.in) is a lookalike of official domains. | Do not contact. Likely a phishing attempt.
+company | UNCLEAR | company.known_without_proof | A real brand is named, but no proof of affiliation is provided. | Verify through official channels.
+pressure | VERIFIED | pressure.no_tactics | No pressure language detected in provided text. | Normal evaluation.
+link | UNCLEAR | link.missing | No link provided. | 
+role | UNCLEAR | role.missing | No specific role was identified. | 
+
+----- 04_legit_startup.txt -----
+[CONTENT]
+Join our unknown startup as a developer. Send email to founder@unknown-startup-xyz.com. We do not ask for any money.
+
+[ANALYSIS]
+Verdict: UNVERIFIED
+Why: Contact: email provided (unknown-startup-xyz.com), but company is unknown.; Company: no company name was found.; Link: no link was provided.; Role: company unknown.
+
+EXTRACTED:
+{
+  "transcript": "Join our unknown startup as a developer. Send email to founder@unknown-startup-xyz.com. We do not ask for any money.\n",
+  "role": "developer",
+  "emails": [
+    "founder@unknown-startup-xyz.com"
+  ],
+  "phones": [],
+  "urls": [],
+  "payment": {
+    "requested": false
+  },
+  "pressureTactics": [],
+  "confidence": {},
+  "extractionMode": "regex-only"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | VERIFIED | payment.no_fee | No fee wording or payment requests detected. | Proceed carefully.
+contact | UNCLEAR | contact.unknown_company | Email provided (unknown-startup-xyz.com), but company is unknown. | Manually verify the company and domain.
+company | UNCLEAR | company.missing | No company name was found. | Ask for the company name.
+pressure | VERIFIED | pressure.no_tactics | No pressure language detected in provided text. | Normal evaluation.
+link | UNCLEAR | link.missing | No link provided. | 
+role | UNCLEAR | role.unknown_company | Company unknown. | 
+
+----- 05_simple_scam.txt -----
+[CONTENT]
+Hello,
+
+We are pleased to inform you that you have been selected for the Data Entry position at Google India.
+Your daily salary will be Rs 2,500.
+
+Please pay a refundable registration fee of ₹500 via UPI to hr.google@ybl to confirm your slot.
+Contact us at 9876543210 or careers@google.com.evil.in for queries.
+
+Visit http://xn--ggle-0nda.com/careers for more info.
+
+[ANALYSIS]
+Verdict: HIGH_RISK
+Why: Payment: a fee or deposit was requested.; Contact: email domain (google.com.evil.in) is a lookalike of official domains.; Link: the link uses a misleading punycode domain.
+
+EXTRACTED:
+{
+  "transcript": "Hello,\n\nWe are pleased to inform you that you have been selected for the Data Entry position at Google India.\nYour daily salary will be Rs 2,500.\n\nPlease pay a refundable registration fee of ₹500 via UPI to hr.google@ybl to confirm your slot.\nContact us at 9876543210 or careers@google.com.evil.in for queries.\n\nVisit http://xn--ggle-0nda.com/careers for more info.\n",
+  "company": "Google",
+  "role": "Data Entry",
+  "emails": [
+    "careers@google.com.evil.in"
+  ],
+  "phones": [
+    "9876543210"
+  ],
+  "urls": [
+    "http://xn--ggle-0nda.com/careers"
+  ],
+  "payment": {
+    "requested": true,
+    "method": "hr.google@ybl",
+    "wording": "pay a refundable registration fee of ₹500 via UPI to hr"
+  },
+  "pressureTactics": [
+    "confirm your slot"
+  ],
+  "confidence": {},
+  "extractionMode": "regex-only",
+  "companySource": "named_in_post"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | RISK | payment.fee_request | A fee or deposit was requested. | Do not pay. Report this post.
+contact | RISK | contact.email_lookalike | Email domain (google.com.evil.in) is a lookalike of official domains. | Do not contact. Likely a phishing attempt.
+company | UNCLEAR | company.known_without_proof | A real brand is named, but no proof of affiliation is provided. | Verify through official channels.
+pressure | UNCLEAR | pressure.tactics_found | Pressure or guaranteed-job tactics detected: confirm your slot. | Evaluate cautiously. Scammers create false urgency.
+link | RISK | link.punycode | xn--ggle-0nda.com (punycode domain targeting known brand) | 
+role | UNCLEAR | role.not_found | Not found in the sources we checked. Many real internships are not publicly listed. | 
+
+----- 06_legit_email.txt -----
+[CONTENT]
+﻿Thank you for applying.
+
+We would like to schedule an interview for the Software Engineer role.
+There are no fees associated with our recruitment process.
+
+Best,
+Talent Acquisition
+Careers.GOOGLE.com
+
+[ANALYSIS]
+Verdict: UNVERIFIED
+Why: Contact: no contact email or phone was provided.; Role: not found in the sources we checked. many real internships are not publicly listed.
+
+EXTRACTED:
+{
+  "transcript": "﻿Thank you for applying.\r\n\r\nWe would like to schedule an interview for the Software Engineer role.\r\nThere are no fees associated with our recruitment process.\r\n\r\nBest,\r\nTalent Acquisition\r\nCareers.GOOGLE.com\r\n",
+  "company": "Google",
+  "role": "Software Engineer",
+  "emails": [],
+  "phones": [],
+  "urls": [
+    "http://Careers.GOOGLE.com"
+  ],
+  "payment": {
+    "requested": false
+  },
+  "pressureTactics": [],
+  "confidence": {},
+  "extractionMode": "regex-only",
+  "companySource": "named_in_post"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | VERIFIED | payment.no_fee | No fee wording or payment requests detected. | Proceed carefully.
+contact | UNCLEAR | contact.missing | No contact email or phone was provided. | Verify contact methods.
+company | VERIFIED | company.known_with_proof | Named in the post. | No contradicting evidence found. Still verify through the company's official site.
+pressure | VERIFIED | pressure.no_tactics | No pressure language detected in provided text. | Normal evaluation.
+link | VERIFIED | link.official_domain | Domain matches the company's official site; destination was not checked. | 
+role | UNCLEAR | role.not_found | Not found in the sources we checked. Many real internships are not publicly listed. | 
+
+----- 07_mixed_signals.txt -----
+[CONTENT]
+Urgent hiring!
+
+We need 50 candidates today. Walk-in interview tomorrow.
+Salary: 30k-40k per month.
+
+Bring your Aadhaar card and a Rs 999 document verification charge.
+Company: Microsoft-hiring.co
+
+[ANALYSIS]
+Verdict: HIGH_RISK
+Why: Payment: found fee phrase "charge" without immediate preceding negation.; Link: the address imitates a known company.
+
+EXTRACTED:
+{
+  "transcript": "Urgent hiring!\n\nWe need 50 candidates today. Walk-in interview tomorrow.\nSalary: 30k-40k per month.\n\nBring your Aadhaar card and a Rs 999 document verification charge.\nCompany: Microsoft-hiring.co\n",
+  "company": "Microsoft",
+  "emails": [],
+  "phones": [],
+  "urls": [
+    "http://Microsoft-hiring.co"
+  ],
+  "payment": {
+    "requested": true,
+    "wording": "Rs 999 document verification charge"
+  },
+  "pressureTactics": [
+    "urgent",
+    "need N candidates today",
+    "walk-in"
+  ],
+  "confidence": {},
+  "extractionMode": "regex-only",
+  "companySource": "named_in_post"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | RISK | payment.fee_wording | Found fee phrase "charge" without immediate preceding negation. | Do not pay. Report this post.
+contact | UNCLEAR | contact.missing | No contact email or phone was provided. | Verify contact methods.
+company | UNCLEAR | company.known_without_proof | A real brand is named, but no proof of affiliation is provided. | Verify through official channels.
+pressure | UNCLEAR | pressure.tactics_found | Pressure or guaranteed-job tactics detected: urgent, need N candidates today, walk-in. | Evaluate cautiously. Scammers create false urgency.
+link | RISK | link.lookalike | microsoft-hiring.co (lookalike of Microsoft) | 
+role | UNCLEAR | role.missing | No specific role was identified. | 
+
+----- 08_obfuscated_links.txt -----
+[CONTENT]
+Click here to apply: http://127.0.0.1/jobs
+Or visit: http://0177.0.0.1/apply
+Secondary link: http://007.com/careers
+
+Send CV to jobs@mygoogle.com
+
+[ANALYSIS]
+Verdict: HIGH_RISK
+Why: Contact: email domain (mygoogle.com) is a lookalike of known brand (google).; Link: the link domain is relatively new.
+
+EXTRACTED:
+{
+  "transcript": "Click here to apply: http://127.0.0.1/jobs\nOr visit: http://0177.0.0.1/apply\nSecondary link: http://007.com/careers\n\nSend CV to jobs@mygoogle.com\n",
+  "emails": [
+    "jobs@mygoogle.com"
+  ],
+  "phones": [],
+  "urls": [
+    "http://127.0.0.1/jobs",
+    "http://0177.0.0.1/apply",
+    "http://007.com/careers"
+  ],
+  "payment": {
+    "requested": false
+  },
+  "pressureTactics": [],
+  "confidence": {},
+  "extractionMode": "regex-only"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | VERIFIED | payment.no_fee | No fee wording or payment requests detected. | Proceed carefully.
+contact | RISK | contact.email_lookalike | Email domain (mygoogle.com) is a lookalike of known brand (Google). | Do not contact. Likely a phishing attempt.
+company | UNCLEAR | company.missing | No company name was found. | Ask for the company name.
+pressure | VERIFIED | pressure.no_tactics | No pressure language detected in provided text. | Normal evaluation.
+link | RISK | link.recent_domain | 127.0.0.1 (IP literal); 007.com (company unknown, cannot verify if domain is official); 007.com (registered 100 days ago) | 
+role | UNCLEAR | role.missing | No specific role was identified. | 
+
+----- 09_sample.txt -----
+[CONTENT]
+Data Entry Job! Work from home. Pay Rs 999 registration fee to confirm your slot. Contact +91 9876543210.
+
+[ANALYSIS]
+Verdict: HIGH_RISK
+Why: Payment: a fee or deposit was requested.
+
+EXTRACTED:
+{
+  "transcript": "Data Entry Job! Work from home. Pay Rs 999 registration fee to confirm your slot. Contact +91 9876543210.\n",
+  "role": "Data Entry",
+  "emails": [],
+  "phones": [
+    "+91 9876543210"
+  ],
+  "urls": [],
+  "payment": {
+    "requested": true,
+    "wording": "Pay Rs 999 registration fee to confirm your slot"
+  },
+  "pressureTactics": [
+    "confirm your slot"
+  ],
+  "confidence": {},
+  "extractionMode": "regex-only"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | RISK | payment.fee_request | A fee or deposit was requested. | Do not pay. Report this post.
+contact | UNCLEAR | contact.phone_only | Only phone/WhatsApp contact provided. | Check Truecaller or official company pages.
+company | UNCLEAR | company.missing | No company name was found. | Ask for the company name.
+pressure | UNCLEAR | pressure.tactics_found | Pressure or guaranteed-job tactics detected: confirm your slot. | Evaluate cautiously. Scammers create false urgency.
+link | UNCLEAR | link.missing | No link provided. | 
+role | UNCLEAR | role.unknown_company | Company unknown. | 
+
+----- 10_legit_with_contact.txt -----
+[CONTENT]
+We are hiring a Software Engineer at Microsoft.
+Contact hr@microsoft.com for any questions.
+Apply at https://careers.microsoft.com.
+No fee is required.
+
+[ANALYSIS]
+Verdict: NO_RED_FLAGS_FOUND
+Why: No explicit red flags were found in the provided claims.
+
+EXTRACTED:
+{
+  "transcript": "We are hiring a Software Engineer at Microsoft.\nContact hr@microsoft.com for any questions.\nApply at https://careers.microsoft.com.\nNo fee is required.\n",
+  "company": "Microsoft",
+  "role": "Software Engineer",
+  "emails": [
+    "hr@microsoft.com"
+  ],
+  "phones": [],
+  "urls": [
+    "https://careers.microsoft.com"
+  ],
+  "payment": {
+    "requested": false
+  },
+  "pressureTactics": [],
+  "confidence": {},
+  "extractionMode": "regex-only",
+  "companySource": "named_in_post"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | VERIFIED | payment.no_fee | No fee wording or payment requests detected. | Proceed carefully.
+contact | VERIFIED | contact.email_official | Email domain matches official domain for Microsoft. | No contradicting evidence found. Still verify through the company's official site.
+company | VERIFIED | company.known_with_proof | Named in the post. | No contradicting evidence found. Still verify through the company's official site.
+pressure | VERIFIED | pressure.no_tactics | No pressure language detected in provided text. | Normal evaluation.
+link | VERIFIED | link.official_domain | Domain matches the company's official site; destination was not checked. | 
+role | UNCLEAR | role.not_found | Not found in the sources we checked. Many real internships are not publicly listed. | 
+
+----- 1_scam_data_entry.txt -----
+[CONTENT]
+Data Entry Job! Work from home. Pay Rs 999 registration fee to confirm your slot. Contact +91 9876543210.
+
+[ANALYSIS]
+Verdict: HIGH_RISK
+Why: Payment: a fee or deposit was requested.
+
+EXTRACTED:
+{
+  "transcript": "Data Entry Job! Work from home. Pay Rs 999 registration fee to confirm your slot. Contact +91 9876543210.\r\n",
+  "role": "Data Entry",
+  "emails": [],
+  "phones": [
+    "+91 9876543210"
+  ],
+  "urls": [],
+  "payment": {
+    "requested": true,
+    "wording": "Pay Rs 999 registration fee to confirm your slot"
+  },
+  "pressureTactics": [
+    "confirm your slot"
+  ],
+  "confidence": {},
+  "extractionMode": "regex-only"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | RISK | payment.fee_request | A fee or deposit was requested. | Do not pay. Report this post.
+contact | UNCLEAR | contact.phone_only | Only phone/WhatsApp contact provided. | Check Truecaller or official company pages.
+company | UNCLEAR | company.missing | No company name was found. | Ask for the company name.
+pressure | UNCLEAR | pressure.tactics_found | Pressure or guaranteed-job tactics detected: confirm your slot. | Evaluate cautiously. Scammers create false urgency.
+link | UNCLEAR | link.missing | No link provided. | 
+role | UNCLEAR | role.unknown_company | Company unknown. | 
+
+----- 2_legit_software_engineer.txt -----
+[CONTENT]
+We are hiring a software engineer at Microsoft. Apply at careers.microsoft.com. No fee is required.
+
+[ANALYSIS]
+Verdict: UNVERIFIED
+Why: Contact: no contact email or phone was provided.; Role: not found in the sources we checked. many real internships are not publicly listed.
+
+EXTRACTED:
+{
+  "transcript": "We are hiring a software engineer at Microsoft. Apply at careers.microsoft.com. No fee is required.\r\n",
+  "company": "Microsoft",
+  "role": "software engineer",
+  "emails": [],
+  "phones": [],
+  "urls": [
+    "http://careers.microsoft.com"
+  ],
+  "payment": {
+    "requested": false
+  },
+  "pressureTactics": [],
+  "confidence": {},
+  "extractionMode": "regex-only",
+  "companySource": "named_in_post"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | VERIFIED | payment.no_fee | No fee wording or payment requests detected. | Proceed carefully.
+contact | UNCLEAR | contact.missing | No contact email or phone was provided. | Verify contact methods.
+company | VERIFIED | company.known_with_proof | Named in the post. | No contradicting evidence found. Still verify through the company's official site.
+pressure | VERIFIED | pressure.no_tactics | No pressure language detected in provided text. | Normal evaluation.
+link | VERIFIED | link.official_domain | Domain matches the company's official site; destination was not checked. | 
+role | UNCLEAR | role.not_found | Not found in the sources we checked. Many real internships are not publicly listed. | 
+
+----- 3_scam_fake_google.txt -----
+[CONTENT]
+Google is hiring! Send resume to hr@g00gle-careers.in. Refundable deposit of ₹500 required for laptop.
+
+[ANALYSIS]
+Verdict: HIGH_RISK
+Why: Payment: a fee or deposit was requested.; Contact: email domain (g00gle-careers.in) is a lookalike of official domains.
+
+EXTRACTED:
+{
+  "transcript": "Google is hiring! Send resume to hr@g00gle-careers.in. Refundable deposit of ₹500 required for laptop.\r\n",
+  "company": "Google",
+  "emails": [
+    "hr@g00gle-careers.in"
+  ],
+  "phones": [],
+  "urls": [],
+  "payment": {
+    "requested": true,
+    "wording": "deposit of ₹500 required for laptop"
+  },
+  "pressureTactics": [],
+  "confidence": {},
+  "extractionMode": "regex-only",
+  "companySource": "named_in_post"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | RISK | payment.fee_request | A fee or deposit was requested. | Do not pay. Report this post.
+contact | RISK | contact.email_lookalike | Email domain (g00gle-careers.in) is a lookalike of official domains. | Do not contact. Likely a phishing attempt.
+company | UNCLEAR | company.known_without_proof | A real brand is named, but no proof of affiliation is provided. | Verify through official channels.
+pressure | VERIFIED | pressure.no_tactics | No pressure language detected in provided text. | Normal evaluation.
+link | UNCLEAR | link.missing | No link provided. | 
+role | UNCLEAR | role.missing | No specific role was identified. | 
+
+----- 4_legit_startup.txt -----
+[CONTENT]
+Join our unknown startup as a developer. Send email to founder@unknown-startup-xyz.com. We do not ask for any money.
+
+[ANALYSIS]
+Verdict: UNVERIFIED
+Why: Contact: email provided (unknown-startup-xyz.com), but company is unknown.; Company: no company name was found.; Link: no link was provided.; Role: company unknown.
+
+EXTRACTED:
+{
+  "transcript": "Join our unknown startup as a developer. Send email to founder@unknown-startup-xyz.com. We do not ask for any money.\r\n",
+  "role": "developer",
+  "emails": [
+    "founder@unknown-startup-xyz.com"
+  ],
+  "phones": [],
+  "urls": [],
+  "payment": {
+    "requested": false
+  },
+  "pressureTactics": [],
+  "confidence": {},
+  "extractionMode": "regex-only"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | VERIFIED | payment.no_fee | No fee wording or payment requests detected. | Proceed carefully.
+contact | UNCLEAR | contact.unknown_company | Email provided (unknown-startup-xyz.com), but company is unknown. | Manually verify the company and domain.
+company | UNCLEAR | company.missing | No company name was found. | Ask for the company name.
+pressure | VERIFIED | pressure.no_tactics | No pressure language detected in provided text. | Normal evaluation.
+link | UNCLEAR | link.missing | No link provided. | 
+role | UNCLEAR | role.unknown_company | Company unknown. | 
+
+----- gmail.txt -----
+[CONTENT]
+We are hiring remote data entry clerks! Contact us at hr.acmecorp@gmail.com. Limited seats available!
+
+[ANALYSIS]
+Verdict: UNVERIFIED
+Why: Contact: email provided (gmail.com), but company is unknown.; Company: no company name was found.; Pressure: pressure or guaranteed-job tactics detected: limited seats.; Link: no link was provided.; Role: company unknown.
+
+EXTRACTED:
+{
+  "transcript": "We are hiring remote data entry clerks! Contact us at hr.acmecorp@gmail.com. Limited seats available!\n",
+  "role": "data entry",
+  "emails": [
+    "hr.acmecorp@gmail.com"
+  ],
+  "phones": [],
+  "urls": [],
+  "payment": {
+    "requested": false
+  },
+  "pressureTactics": [
+    "limited seats"
+  ],
+  "confidence": {},
+  "extractionMode": "regex-only"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | VERIFIED | payment.no_fee | No fee wording or payment requests detected. | Proceed carefully.
+contact | UNCLEAR | contact.unknown_company | Email provided (gmail.com), but company is unknown. | Manually verify the company and domain.
+company | UNCLEAR | company.missing | No company name was found. | Ask for the company name.
+pressure | UNCLEAR | pressure.tactics_found | Pressure or guaranteed-job tactics detected: limited seats. | Evaluate cautiously. Scammers create false urgency.
+link | UNCLEAR | link.missing | No link provided. | 
+role | UNCLEAR | role.unknown_company | Company unknown. | 
+
+----- infosys.txt -----
+[CONTENT]
+Infosys is hiring for the role of Systems Engineer. 
+Apply directly on our official portal: https://careers.infosys.com/
+We offer a competitive salary and a comprehensive benefits package.
+No fees are required to apply.
+
+[ANALYSIS]
+Verdict: UNVERIFIED
+Why: Contact: no contact email or phone was provided.; Role: not found in the sources we checked. many real internships are not publicly listed.
+
+EXTRACTED:
+{
+  "transcript": "Infosys is hiring for the role of Systems Engineer. \nApply directly on our official portal: https://careers.infosys.com/\nWe offer a competitive salary and a comprehensive benefits package.\nNo fees are required to apply.\n",
+  "company": "Infosys",
+  "role": "Systems Engineer",
+  "emails": [],
+  "phones": [],
+  "urls": [
+    "https://careers.infosys.com/"
+  ],
+  "payment": {
+    "requested": false
+  },
+  "pressureTactics": [],
+  "confidence": {},
+  "extractionMode": "regex-only",
+  "companySource": "named_in_post"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | VERIFIED | payment.no_fee | No fee wording or payment requests detected. | Proceed carefully.
+contact | UNCLEAR | contact.missing | No contact email or phone was provided. | Verify contact methods.
+company | VERIFIED | company.known_with_proof | Named in the post. | No contradicting evidence found. Still verify through the company's official site.
+pressure | VERIFIED | pressure.no_tactics | No pressure language detected in provided text. | Normal evaluation.
+link | VERIFIED | link.official_domain | Domain matches the company's official site; destination was not checked. | 
+role | UNCLEAR | role.not_found | Not found in the sources we checked. Many real internships are not publicly listed. | 
+
+----- shortener.txt -----
+[CONTENT]
+Guaranteed job as a Software Engineer at Tech Mahindra! Apply now before it's too late: https://bit.ly/3mZ1x
+
+[ANALYSIS]
+Verdict: UNVERIFIED
+Why: Contact: no contact email or phone was provided.; Company: a real brand is named, but no proof of affiliation is provided.; Pressure: pressure or guaranteed-job tactics detected: guaranteed job, before it's too late.; Link: the link could not be reached or destination is hidden.; Role: not found in the sources we checked. many real internships are not publicly listed.
+
+EXTRACTED:
+{
+  "transcript": "Guaranteed job as a Software Engineer at Tech Mahindra! Apply now before it's too late: https://bit.ly/3mZ1x\n",
+  "company": "Tech Mahindra",
+  "role": "Software Engineer",
+  "emails": [],
+  "phones": [],
+  "urls": [
+    "https://bit.ly/3mZ1x"
+  ],
+  "payment": {
+    "requested": false
+  },
+  "pressureTactics": [
+    "guaranteed job",
+    "before it's too late"
+  ],
+  "confidence": {},
+  "extractionMode": "regex-only",
+  "companySource": "named_in_post"
+}
+
+PASSPORT (Red Flags & Verified Claims):
+payment | VERIFIED | payment.no_fee | No fee wording or payment requests detected. | Proceed carefully.
+contact | UNCLEAR | contact.missing | No contact email or phone was provided. | Verify contact methods.
+company | UNCLEAR | company.known_without_proof | A real brand is named, but no proof of affiliation is provided. | Verify through official channels.
+pressure | UNCLEAR | pressure.tactics_found | Pressure or guaranteed-job tactics detected: guaranteed job, before it's too late. | Evaluate cautiously. Scammers create false urgency.
+link | UNCLEAR | link.unresolved | bit.ly (destination hidden) | 
+role | UNCLEAR | role.not_found | Not found in the sources we checked. Many real internships are not publicly listed. | 

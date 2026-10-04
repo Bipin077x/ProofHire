@@ -34,21 +34,26 @@ describe("Analyze API Route", () => {
         if (text.includes("ignore previous instructions")) {
           // Fake a scam result
           return {
-            passport: [
-              { claim: "payment", status: "RISK", evidence: "Found fee", ruleId: "payment.fee", sources: [] }
+            results: [
+              { claim: "payment", status: "RISK", evidence: "Found fee", ruleId: "payment.fee_request", sources: [] }
             ],
-            rollup: { verdict: "HIGH_RISK", reasons: ["Fee found"] },
-            extracted: { transcript: text, payment: { requested: true } }
-          };
+            verdict: "HIGH_RISK",
+            why: ["Fee found"],
+            claims: { transcript: text, payment: { requested: true } }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          } as any;
         }
         return {
-          passport: [],
-          rollup: { verdict: "UNVERIFIED", reasons: [] },
-          extracted: { transcript: text }
-        };
+          results: [],
+          verdict: "UNVERIFIED",
+          why: [],
+          claims: { transcript: text }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any;
       },
       safeResolve: async (url: string) => {
-        return { finalUrl: url };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return { finalUrl: url, chain: [] } as any;
       }
     };
   };

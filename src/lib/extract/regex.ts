@@ -10,7 +10,7 @@ export const urlRegex = /(?:https?:\/\/)?(?:www\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}\
 export const upiRegex = /\b[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z0-9]{2,64}\b(?!\.[a-zA-Z])/g;
 
 // Fees
-export const feeWordingRegex = /(?:pay|payment|fee|charge|registration|deposit|send|transfer)[^.!?;]*(?:\b(?:₹|Rs\.?|INR)?\s?\d+[\d,]*)?/gi;
+export const feeWordingRegex = /(?:pay|payment|fee|charge|registration|deposit|send|transfer)[^.!?;]*(?:\b(?:₹|Rs\.?|INR)?\s?\d+[\d,]*)?|(?:₹|Rs\.?|INR)\s?\d+[\d,]*[^.!?;]*(?:fee|charge|registration|deposit|confirm|to confirm|required|pay)/gi;
 
 // Pressure tactics
 export const pressureRegex = /\b(?:urgent|immediately|limited\s+slots|today\s+only|act\s+fast|hurry|final\s+warning)\b/gi;
@@ -94,9 +94,39 @@ export function extractFeeWording(text: string): string[] {
   return Array.from(new Set(filtered));
 }
 
+export const PRESSURE_PATTERNS: { label: string; regex: RegExp }[] = [
+  { label: "urgent", regex: /\burgent(?:ly)?\b/i },
+  { label: "need N candidates today", regex: /need \d+ candidates today/i },
+  { label: "walk-in", regex: /\bwalk-in\b/i },
+  { label: "immediate joining", regex: /\bimmediate joining\b/i },
+  { label: "apply today", regex: /\bapply today\b/i },
+  { label: "limited seats", regex: /\blimited seats\b/i },
+  { label: "limited slots", regex: /\blimited slots\b/i },
+  { label: "last date today", regex: /\blast date today\b/i },
+  { label: "confirm your slot", regex: /\bconfirm your slot\b/i },
+  { label: "confirm seat", regex: /\bconfirm seat\b/i },
+  { label: "guaranteed job", regex: /\bguaranteed job\b/i },
+  { label: "no interview", regex: /\bno interview\b/i },
+  { label: "earn per day", regex: /\bearn per day\b/i },
+  { label: "earn daily", regex: /\bearn daily\b/i },
+  { label: "before it's too late", regex: /before it's too late/i },
+  { label: "hurry", regex: /\bhurry\b/i },
+  { label: "immediate hiring", regex: /\bimmediate hiring\b/i },
+  { label: "immediately", regex: /\bimmediately\b/i },
+  { label: "act fast", regex: /\bact fast\b/i },
+  { label: "today only", regex: /\btoday only\b/i },
+  { label: "final warning", regex: /\bfinal warning\b/i },
+  { label: "100% placement", regex: /100% placement/i }
+];
+
 export function extractPressureTactics(text: string): string[] {
-  const matches = text.match(pressureRegex) || [];
-  return Array.from(new Set(matches.map(m => m.toLowerCase())));
+  const foundPhrases: string[] = [];
+  for (const { label, regex } of PRESSURE_PATTERNS) {
+    if (regex.test(text)) {
+      foundPhrases.push(label);
+    }
+  }
+  return foundPhrases;
 }
 
 export function extractRole(text: string): string | undefined {

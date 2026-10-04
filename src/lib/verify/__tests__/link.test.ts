@@ -22,6 +22,17 @@ describe("Link Verifier", () => {
       expect(result.ruleId).toBe("link.lookalike");
     });
 
+    it("flags microsoft-hiring.co as RISK even when DNS fails", async () => {
+      vi.mocked(safefetch.safeResolve).mockResolvedValue({
+        finalUrl: "https://microsoft-hiring.co",
+        error: "dns_lookup_failed",
+        chain: []
+      });
+      const result = await verifyLinks({ company: "Microsoft", urls: ["https://microsoft-hiring.co"] });
+      expect(result.status).toBe("RISK");
+      expect(result.ruleId).toBe("link.lookalike");
+    });
+
     it("flags shortener to unofficial domain as RISK", async () => {
       vi.mocked(safefetch.safeResolve).mockResolvedValue({
         finalUrl: "https://random-jobs.com",
@@ -32,7 +43,7 @@ describe("Link Verifier", () => {
       expect(result.ruleId).toBe("link.shortener_unofficial");
     });
 
-    it("flags blocked domains as RISK", async () => {
+    it("flags IP literal domains as RISK", async () => {
       vi.mocked(safefetch.safeResolve).mockResolvedValue({
         finalUrl: "http://10.0.0.1",
         chain: [],
@@ -40,7 +51,7 @@ describe("Link Verifier", () => {
       });
       const result = await verifyLinks({ company: "Google", urls: ["http://10.0.0.1"] });
       expect(result.status).toBe("RISK");
-      expect(result.ruleId).toBe("link.blocked_unsafe");
+      expect(result.ruleId).toBe("link.ip_literal");
     });
 
     it("flags new domains (< 90 days) as RISK", async () => {
@@ -80,6 +91,21 @@ describe("Link Verifier", () => {
       });
       const result = await verifyLinks({ company: "Google", urls: ["https://careers.google.com"] });
       expect(result.status).toBe("VERIFIED");
+    });
+
+    it("verifies official domain even when DNS fails", async () => {
+      vi.mocked(safefetch.safeResolve).mockResolvedValue({
+        finalUrl: "https://careers.google.com",
+        error: "dns_lookup_failed",
+        chain: []
+      });
+      const res1 = await verifyLinks({ company: "Google", urls: ["https://careers.google.com"] });
+      expect(res1.status).toBe("VERIFIED");
+      expect(res1.ruleId).toBe("link.official_domain");
+      
+      const res2 = await verifyLinks({ company: "Infosys", urls: ["https://careers.infosys.com"] });
+      expect(res2.status).toBe("VERIFIED");
+      expect(res2.ruleId).toBe("link.official_domain");
     });
 
     it("verifies shortener resolving to official domain", async () => {

@@ -1,4 +1,5 @@
 import { VerifyResult } from "../verify/types";
+import { getTemplate } from "../../content/copy";
 
 export interface RollupResult {
   verdict: "HIGH_RISK" | "CAUTION" | "UNVERIFIED" | "NO_RED_FLAGS_FOUND";
@@ -7,6 +8,10 @@ export interface RollupResult {
 
 export function calculateRollup(results: VerifyResult[]): RollupResult {
   const formatReason = (r: VerifyResult) => {
+    try {
+      const template = getTemplate(r.ruleId);
+      if (template && template.why) return template.why;
+    } catch (e) {}
     const claimName = r.claim.charAt(0).toUpperCase() + r.claim.slice(1);
     return `${claimName}: ${r.evidence.toLowerCase()}`;
   };

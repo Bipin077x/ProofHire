@@ -29,7 +29,7 @@ export function verifyPayment(claims: PaymentClaims): VerifyResult {
   for (const sentence of sentences) {
     if (!sentence.trim()) continue;
     
-    // Check for payment imperatives followed by amount/fee in the same sentence
+    // Check for payment requests followed by amount/fee in the same sentence
     const impMatch = sentence.match(/\b(pay|send|transfer|deposit|remit|scan|upi)\b/i);
     if (impMatch) {
       const restOfSentence = sentence.slice(impMatch.index! + impMatch[0].length);
@@ -37,10 +37,10 @@ export function verifyPayment(claims: PaymentClaims): VerifyResult {
         return {
           claim: "payment",
           status: "RISK",
-          evidence: `Found payment imperative followed by fee/amount in sentence: "${sentence.trim()}"`,
+          evidence: `Found payment request followed by fee/amount in sentence: "${sentence.trim()}"`,
           sources: [],
           nextAction: "Do not pay. Report this post.",
-          ruleId: "payment.imperative_match"
+          ruleId: "payment.fee_request"
         };
       }
     }

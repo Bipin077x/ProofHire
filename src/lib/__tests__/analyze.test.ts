@@ -18,7 +18,7 @@ describe("analyzePost", () => {
     
     const result = await analyzePost("pay Rs 999");
     expect(result.verdict).toBe("HIGH_RISK");
-    expect(result.why.length).toBeGreaterThan(0);
+    expect(result.why?.length).toBeGreaterThan(0);
   });
 
   it("Test 2 (Legit): Expect rollup UNVERIFIED if no verifiers exist for unknown company", async () => {

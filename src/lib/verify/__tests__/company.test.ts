@@ -39,6 +39,7 @@ describe("Company Verifier", () => {
       const result = verifyCompany({ company: "Microsoft", emails: ["hr@microsoft.com"] });
       expect(result.status).toBe("VERIFIED");
       expect(result.ruleId).toBe("company.known_with_proof");
+      expect(result.evidence).toBe("Named in the post.");
     });
 
     it("returns VERIFIED for known brand with link proof", () => {

@@ -128,7 +128,14 @@ describe("safeFetch", () => {
       { url: "http://169.254.169.254/latest/meta-data", reason: "private_ip" },
       { url: "http://user:pass@example.com", reason: "credentials_in_url" },
       { url: "ftp://x", reason: "unsupported_protocol" },
-      { url: "file:///etc/passwd", reason: "unsupported_protocol" }
+      { url: "file:///etc/passwd", reason: "unsupported_protocol" },
+      // IPv6 extended blocks
+      { url: "http://[ff01::1]", reason: "private_ip" },
+      { url: "http://[64:ff9b::1]", reason: "private_ip" },
+      { url: "http://[2002::1]", reason: "private_ip" },
+      { url: "http://[2001::1]", reason: "private_ip" },
+      { url: "http://[fec0::1]", reason: "private_ip" },
+      { url: "http://[fed0::1]", reason: "private_ip" }
     ];
     
     it.each(cases)("blocks $url with $reason", async ({ url, reason }) => {
@@ -193,6 +200,52 @@ describe("safeFetch", () => {
 
       expect(resPriv.blocked?.reason).toBe("private_ip");
       expect(resPub.blocked).toBeUndefined();
+    });
+
+    it("lookup honors options.all false (single address)", async () => {
+      const customDnsLookup = async (host: string): Promise<dns.LookupAddress[]> => {
+        return [{ address: "93.184.216.34", family: 4 } as dns.LookupAddress];
+      };
+      const resolver = createSafeResolver({ allowedPorts: [80, 443], dnsLookup: customDnsLookup });
+      
+      let allPassedToCallback: boolean | undefined;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.mocked(undici.Agent).mockImplementationOnce(function(opts: any) {
+        // Intercept the lookup function
+        const originalLookup = opts.connect.lookup;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        opts.connect.lookup = (h: string, o: any, cb: any) => {
+           allPassedToCallback = o.all;
+           // eslint-disable-next-line @typescript-eslint/no-explicit-any
+           originalLookup(h, { ...o, all: false }, (err: any, addr: any, fam: any) => {
+             // ensure it passes single args
+             if (Array.isArray(addr)) throw new Error("Expected single address");
+             cb(err, addr, fam);
+           });
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return new (undici.Agent as any)(opts);
+      });
+      
+      vi.mocked(undici.request).mockImplementationOnce(async () => {
+        return { statusCode: 200, headers: {}, body: { dump: vi.fn(), destroy: vi.fn() } } as unknown as undici.Dispatcher.ResponseData;
+      });
+
+      await resolver("http://public.com/");
+      // it should not throw and should complete
+    });
+
+    it("uses fixed User-Agent and allowlisted Accept only", async () => {
+      const resolver = createSafeResolver({ allowedPorts: [80, 443], dnsLookup: async () => [{ address: "93.184.216.34", family: 4 } as dns.LookupAddress] });
+      vi.mocked(undici.request).mockImplementationOnce(async (url, options) => {
+        const headers = options?.headers as Record<string, string> | undefined;
+        expect(headers?.["User-Agent"]).toBe("ProofHireBot/1.0 (+contact-url)");
+        expect(headers?.["Accept"]).toBe("application/json");
+        expect(options?.method).toBe("HEAD");
+        return { statusCode: 200, headers: {}, body: { dump: vi.fn(), destroy: vi.fn() } } as unknown as undici.Dispatcher.ResponseData;
+      });
+
+      await resolver("http://test.com", { headers: { "Accept": "application/json", "X-Custom": "test" }, method: "POST" });
     });
   });
 

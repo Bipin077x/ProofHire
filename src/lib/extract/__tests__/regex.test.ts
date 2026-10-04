@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import fs from "fs";
+import path from "path";
 import {
   extractEmails,
   extractPhones,
@@ -63,6 +65,9 @@ describe("Regex Extraction", () => {
   describe("Fee Wording", () => {
     const feeCases = [
       ["pay Rs 999 registration", true],
+      ["₹500 registration fee", true],
+      ["Rs. 999 to confirm", true],
+      ["INR 1,500 deposit", true],
       ["₹500 refundable security deposit", true],
       ["send 1,499 to confirm your seat", true],
       ["training fee of INR 2000", true],
@@ -115,6 +120,14 @@ describe("Regex Extraction", () => {
     it.each(emailCases)("email('%s') -> %s", (input, expected) => {
       const res = extractEmails(input as string);
       expect(res).toContain(expected);
+    });
+  });
+
+  describe("Fixture Encoding", () => {
+    it("preserves ₹ symbol when reading UTF-8 files", () => {
+      const fixturePath = path.join(__dirname, "../../../../scripts/fixtures/01_simple_scam.txt");
+      const text = fs.readFileSync(fixturePath, "utf8");
+      expect(text).toContain("₹500");
     });
   });
 });
