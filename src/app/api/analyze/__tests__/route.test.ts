@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { handleAnalyzeRequest } from "../route";
+import { handleAnalyzeRequest } from "../handler";
 import { PrismaClient } from "@prisma/client";
 import { InMemoryRateLimiter } from "../../../../lib/rate-limit";
 import { AnalyzeResult } from "../../../../lib/analyze";

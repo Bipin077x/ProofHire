@@ -69,6 +69,6 @@ export function createFakeResolve() {
 
 export const offlineDeps: VerificationDeps = {
   searchProvider: {
-    async search() { return []; }
+    async search() { return { ok: true, results: [] }; }
   }
 };

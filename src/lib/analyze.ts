@@ -72,11 +72,11 @@ export async function analyzePost(text: string, imageUrl?: string, deps?: Verifi
   // Use dummy provider if deps not passed
   const provider = deps || {
     searchProvider: {
-      async search(query: string) { return []; }
+      async search(query: string) { return { ok: true, results: [] }; }
     }
   };
 
-  const results = await runAllVerifiers(claims, provider);
+  const results = await runAllVerifiers(claims, provider as unknown as VerificationDeps);
   const rollup = calculateRollup(results);
 
   return {

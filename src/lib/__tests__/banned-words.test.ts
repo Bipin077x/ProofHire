@@ -30,7 +30,7 @@ describe("Banned Words Scanner", () => {
     for (const file of fixtures) {
       const p = path.join(fixturesDir, file);
       const text = fs.readFileSync(p, "utf-8");
-      const deps: VerificationDeps = { searchProvider: { async search() { return []; } } };
+      const deps: VerificationDeps = { searchProvider: { async search() { return { ok: true, results: [] }; } } };
       const result = await analyzePost(text, undefined, deps);
       checkNoBannedWords(result.verdict);
       checkNoBannedWords(result.why);

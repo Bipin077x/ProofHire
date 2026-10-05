@@ -65,7 +65,7 @@ vi.mock("../safe-fetch", async (importOriginal) => {
 });
 
 const fakeDeps: VerificationDeps = {
-  searchProvider: { async search() { return []; } },
+  searchProvider: { async search() { return { ok: true, results: [] }; } },
   resolveUrl: makeFakeResolve()
 };
 

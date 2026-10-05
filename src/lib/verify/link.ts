@@ -53,7 +53,7 @@ export async function verifyLinks(claims: { company?: string; urls?: string[] },
 
   let worstStatus = "VERIFIED";
   const combinedEvidence: string[] = [];
-  const combinedSources: { url: string; label: string }[] = [];
+  const combinedSources: { url: string; label: string; kind?: "official" | "search_result" | "user_post" | "other" }[] = [];
   let ruleId = "link.verified";
   let limitations = "";
 
@@ -84,7 +84,7 @@ export async function verifyLinks(claims: { company?: string; urls?: string[] },
     if (companyData && companyData.officialDomains && isOfficial(initialHost, companyData.officialDomains)) {
       // VERIFIED link.official_domain
       combinedEvidence.push(`Domain matches the company's official site; destination was not checked.`);
-      combinedSources.push({ url: urlStr, label: initialHost });
+      combinedSources.push({ url: urlStr, label: initialHost, kind: "official" });
       if (ruleId === "link.verified") ruleId = "link.official_domain";
       continue; // Skip network call entirely
     }
@@ -212,7 +212,7 @@ export async function verifyLinks(claims: { company?: string; urls?: string[] },
       if (isOff) {
         // VERIFIED for this URL
         combinedEvidence.push(`${chainStr} (official domain)`);
-        combinedSources.push({ url: finalUrlStr, label: finalHost });
+        combinedSources.push({ url: finalUrlStr, label: finalHost, kind: "official" });
         if (ruleId === "link.verified") ruleId = "link.official_domain";
       } else if (fetchRes.chain.length > 1 && SHORTENERS.some(s => initialHost === s || initialHost.endsWith("." + s))) {
         updateWorst("RISK");

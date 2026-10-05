@@ -5,6 +5,8 @@ import { verifyCompany } from "./company";
 import { verifyPressure } from "./pressure";
 import { verifyLinks } from "./link";
 import { verifyRole, SearchProvider } from "./role";
+import { verifyPage } from "./page";
+import type { PageProvider } from "../providers/index";
 import type { ClaimsInput } from "../extract/claimsSchema";
 
 export function runOfflineVerifiers(claims: ClaimsInput): VerifyResult[] {
@@ -18,6 +20,7 @@ export function runOfflineVerifiers(claims: ClaimsInput): VerifyResult[] {
 
 export interface VerificationDeps {
   searchProvider: SearchProvider;
+  pageProvider?: PageProvider;
   resolveUrl?: (url: string) => Promise<import("../safe-fetch").SafeFetchResult>;
 }
 
@@ -28,8 +31,9 @@ export async function runAllVerifiers(claims: ClaimsInput, deps: VerificationDep
   
   const linkPromise = Promise.race([verifyLinks(claims, deps.resolveUrl), timeoutPromise("link")]);
   const rolePromise = Promise.race([verifyRole(claims, deps.searchProvider), timeoutPromise("role")]);
+  const pagePromise = Promise.race([verifyPage(claims, deps.pageProvider), timeoutPromise("page")]);
   
-  const [linkRes, roleRes] = await Promise.allSettled([linkPromise, rolePromise]);
+  const [linkRes, roleRes, pageRes] = await Promise.allSettled([linkPromise, rolePromise, pagePromise]);
   
   const mapResult = (res: PromiseSettledResult<VerifyResult>, claimName: ClaimKey): VerifyResult => {
     if (res.status === "fulfilled") {
@@ -48,13 +52,13 @@ export async function runAllVerifiers(claims: ClaimsInput, deps: VerificationDep
   const mapped = [
     ...offline,
     mapResult(linkRes as PromiseSettledResult<VerifyResult>, "link"),
-    mapResult(roleRes as PromiseSettledResult<VerifyResult>, "role")
+    mapResult(roleRes as PromiseSettledResult<VerifyResult>, "role"),
+    mapResult(pageRes as PromiseSettledResult<VerifyResult>, "page")
   ];
 
-  const { getTemplate } = await import("../../content/copy");
+  const { getTemplate } = await import("../../content/copyTemplates");
   for (const res of mapped) {
-    // Link evidence is a per-URL combined string from verifyLinks — keep it as-is
-    if (res.claim === "link") continue;
+    if (res.claim === "link" || res.claim === "page") continue;
     const template = getTemplate(res.ruleId);
     if (template && template.evidence) {
       res.evidence = template.evidence;

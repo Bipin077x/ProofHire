@@ -2,31 +2,45 @@ import { VerifyResult } from "./types";
 import { resolveCompany } from "./data/companies";
 import { isOfficial } from "./domain";
 
+export type SearchResult = { title: string; url: string; snippet: string };
+
 export interface SearchProvider {
-  search(query: string): Promise<{ title: string; url: string; snippet: string }[]>;
+  search(query: string, includeDomains?: string[]): Promise<{ ok: true; results: SearchResult[] } | { ok: false; reason: string }>;
 }
 
 export class BraveSearchProvider implements SearchProvider {
-  async search(query: string): Promise<{ title: string; url: string; snippet: string }[]> {
+  constructor(private customFetch: typeof fetch = fetch) {}
+
+  async search(query: string, includeDomains?: string[]): Promise<{ ok: true; results: SearchResult[] } | { ok: false; reason: string }> {
     const apiKey = process.env.BRAVE_API_KEY;
-    if (!apiKey) throw new Error("no search key");
+    if (!apiKey) return { ok: false, reason: "no search key" };
     
-    // In actual implementation, we'd fetch from Brave Search API.
-    // Assuming this returns an array of objects for demonstration.
-    const res = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}`, {
-      headers: {
-        "Accept": "application/json",
-        "X-Subscription-Token": apiKey
-      }
-    });
-    if (!res.ok) throw new Error("Search failed");
-    const data = await res.json();
-    
-    return data.web?.results?.map((r: { title: string; url: string; description: string }) => ({
-      title: r.title,
-      url: r.url,
-      snippet: r.description
-    })) || [];
+    // Brave doesn't support an array of includeDomains natively in the API body like Tavily, 
+    // so we append it to the query if provided
+    let finalQuery = query;
+    if (includeDomains && includeDomains.length > 0) {
+      finalQuery += ` site:${includeDomains[0]}`;
+    }
+
+    try {
+      const res = await this.customFetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(finalQuery)}`, {
+        headers: {
+          "Accept": "application/json",
+          "X-Subscription-Token": apiKey
+        }
+      });
+      if (!res.ok) return { ok: false, reason: "unavailable" };
+      const data = await res.json();
+      
+      const results = data.web?.results?.map((r: { title: string; url: string; description: string }) => ({
+        title: r.title,
+        url: r.url,
+        snippet: r.description
+      })) || [];
+      return { ok: true, results };
+    } catch {
+      return { ok: false, reason: "unavailable" };
+    }
   }
 }
 
@@ -47,12 +61,32 @@ export async function verifyRole(claims: { role?: string; company?: string }, pr
     return { claim: "role", status: "UNCLEAR", evidence: "no official domain known", ruleId: "role.no_official_domain", sources: [] };
   }
   
-  // Try to search with the primary official domain
-  const officialDomain = companyData.officialDomains[0];
-  const query = `site:${officialDomain} "${role}"`;
+  // Prompt: "Query contains ONLY company name and role title"
+  const query = `${companyName} ${role}`;
   
   try {
-    const results = await provider.search(query);
+    const searchRes = await provider.search(query, companyData.officialDomains);
+    if (!searchRes.ok) {
+      if (searchRes.reason === "no search key") {
+        return {
+          claim: "role",
+          status: "UNCLEAR",
+          evidence: "role lookup unavailable (no search key)",
+          ruleId: "role.no_api_key",
+          sources: []
+        };
+      }
+      // Prompt: "provider failure -> UNCLEAR check failed"
+      return {
+        claim: "role",
+        status: "UNCLEAR",
+        evidence: "check failed",
+        ruleId: "role.error",
+        sources: []
+      };
+    }
+
+    const results = searchRes.results;
     
     // Evaluate results
     for (const res of results) {
@@ -63,6 +97,7 @@ export async function verifyRole(claims: { role?: string; company?: string }, pr
         continue;
       }
       
+      // Prompt: "re-check every result host with isOfficial and drop the rest"
       if (!isOfficial(parsedUrl.hostname, companyData.officialDomains)) {
         continue;
       }
@@ -79,17 +114,19 @@ export async function verifyRole(claims: { role?: string; company?: string }, pr
         }
       }
       
+      // Prompt: "match -> VERIFIED with the URL as a source (source.kind 'search_result')"
       if (matchedTokens / roleTokens.length >= 0.6) {
         return {
           claim: "role",
           status: "VERIFIED",
           evidence: "Role found on official site.",
           ruleId: "role.found",
-          sources: [{ url: res.url, label: res.title }]
+          sources: [{ url: res.url, label: res.title, kind: "search_result" }]
         };
       }
     }
     
+    // Prompt: "no match -> UNCLEAR with the existing 'Not found in the sources we checked' text"
     return {
       claim: "role",
       status: "UNCLEAR",
@@ -99,20 +136,10 @@ export async function verifyRole(claims: { role?: string; company?: string }, pr
     };
     
   } catch (e: unknown) {
-    const error = e as Error;
-    if (error.message === "no search key") {
-      return {
-        claim: "role",
-        status: "UNCLEAR",
-        evidence: "role lookup unavailable (no search key)",
-        ruleId: "role.no_api_key",
-        sources: []
-      };
-    }
     return {
       claim: "role",
       status: "UNCLEAR",
-      evidence: "Role check failed.",
+      evidence: "check failed",
       ruleId: "role.error",
       sources: []
     };

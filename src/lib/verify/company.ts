@@ -63,7 +63,7 @@ export function verifyCompany(claims: CompanyClaims): VerifyResult {
       claim: "company",
       status: "VERIFIED",
       evidence: isInferred ? "Inferred from the official domain in the link; the post does not name the company." : "Named in the post.",
-      sources: [{ label: "Careers Site", url: company.careersUrl }],
+      sources: [{ label: "Careers Site", url: company.careersUrl, kind: "official" }],
       nextAction: "No contradicting evidence found. Still verify through the company's official site.",
       limitations: "A real brand doesn't guarantee the specific role exists.",
       ruleId: isInferred ? "company.inferred" : "company.known_with_proof"
@@ -74,7 +74,7 @@ export function verifyCompany(claims: CompanyClaims): VerifyResult {
     claim: "company",
     status: "UNCLEAR",
     evidence: `Known brand (${company.name}); a real brand does not prove this post is real.`,
-    sources: [{ label: "Careers Site", url: company.careersUrl }],
+    sources: [{ label: "Careers Site", url: company.careersUrl, kind: "official" }],
     nextAction: "Verify through official channels.",
     limitations: "Scammers frequently impersonate large brands.",
     ruleId: "company.known_without_proof"

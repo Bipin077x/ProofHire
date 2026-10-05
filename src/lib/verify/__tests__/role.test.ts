@@ -3,9 +3,9 @@ import { verifyRole, SearchProvider } from "../role";
 
 class FakeProvider implements SearchProvider {
   constructor(private results: { title: string; url: string; snippet: string }[], private error?: string) {}
-  async search(query: string) {
-    if (this.error) throw new Error(this.error);
-    return this.results;
+  async search(query: string, includeDomains?: string[]) {
+    if (this.error) return { ok: false as const, reason: this.error };
+    return { ok: true as const, results: this.results };
   }
 }
 

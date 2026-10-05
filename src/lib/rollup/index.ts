@@ -1,5 +1,5 @@
 import { VerifyResult } from "../verify/types";
-import { getTemplate } from "../../content/copy";
+import { getTemplate } from "../../content/copyTemplates";
 
 export interface RollupResult {
   verdict: "HIGH_RISK" | "CAUTION" | "UNVERIFIED" | "NO_RED_FLAGS_FOUND";

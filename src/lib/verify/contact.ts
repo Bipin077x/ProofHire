@@ -50,7 +50,7 @@ export function verifyContact(claims: ContactClaims): VerifyResult {
             claim: "contact",
             status: "VERIFIED",
             evidence: `Email domain matches official domain for ${company.name}.`,
-            sources: [{ label: "Official Site", url: company.careersUrl }],
+            sources: [{ label: "Official Site", url: company.careersUrl, kind: "official" }],
             nextAction: "No contradicting evidence found. Still verify through the company's official site.",
             limitations: "Email spoofing is still technically possible, but rare in basic scams.",
             ruleId: "contact.email_official"
@@ -62,7 +62,7 @@ export function verifyContact(claims: ContactClaims): VerifyResult {
             claim: "contact",
             status: "RISK",
             evidence: `Free email (${host}) claiming to represent ${company.name}.`,
-            sources: [{ label: "Manual verification", url: "https://www.linkedin.com/search/results/companies/?keywords=" + encodeURIComponent(company.name) }],
+            sources: [{ label: "Manual verification", url: "https://www.linkedin.com/search/results/companies/?keywords=" + encodeURIComponent(company.name), kind: "other" }],
             nextAction: "Avoid contact. Real companies use official domains.",
             limitations: "Very small companies might use free emails, but this rule applies to known brands.",
             ruleId: "contact.freemail_known_brand"

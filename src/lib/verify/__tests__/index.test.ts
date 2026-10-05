@@ -4,7 +4,7 @@ import { SearchProvider } from "../role";
 import * as link from "../link";
 
 class MockProvider implements SearchProvider {
-  async search(query: string) { return []; }
+  async search(query: string, includeDomains?: string[]) { return { ok: true as const, results: [] }; }
 }
 
 describe("runAllVerifiers", () => {
@@ -13,7 +13,7 @@ describe("runAllVerifiers", () => {
       claim: "link", status: "VERIFIED", evidence: "", ruleId: "", sources: []
     });
     const results = await runAllVerifiers({ transcript: "", company: "Google" }, { searchProvider: new MockProvider() });
-    expect(results.length).toBe(6);
+    expect(results.length).toBe(7);
     expect(results.find(r => r.claim === "link")).toBeDefined();
     expect(results.find(r => r.claim === "role")).toBeDefined();
     expect(results.find(r => r.claim === "payment")).toBeDefined();

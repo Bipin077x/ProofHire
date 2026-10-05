@@ -25,7 +25,7 @@ async function main() {
   
   const result = await analyzePost(text, undefined, {
     searchProvider: {
-      async search(_query: string) { return []; }
+      async search(_query: string) { return { ok: true, results: [] }; }
     },
     resolveUrl
   });

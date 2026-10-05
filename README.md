@@ -1,36 +1,84 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ProofHire
 
-## Getting Started
+ProofHire helps job seekers assess whether a job posting or recruiter message may
+be a scam. It extracts claims from submitted text, checks available evidence, and
+shows a verdict with explanations and suggested next steps.
 
-First, run the development server:
+> **Use as a screening aid, not a guarantee.** Results depend on the submitted
+> content and the availability and quality of external sources. Verify important
+> details independently before sharing personal information, paying fees, or
+> accepting an offer.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Features
+
+- Analyze pasted job descriptions, recruiter messages, or links.
+- Review claims about the role, company, contact details, and links.
+- See evidence, limitations, and next steps alongside the result.
+- Explore sample analyses, the how-it-works guide, and recent local history.
+- Redact sensitive indicators and use privacy-conscious verification checks.
+
+## Requirements
+
+- Node.js 18.17 or newer
+- npm
+- An Anthropic API key for AI-assisted claim extraction
+- Optional search-provider API keys for live evidence checks
+
+## Getting started
+
+```powershell
+npm install
+Copy-Item .env.example .env
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Add your API keys to `.env`, then start the development server:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```powershell
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open [http://localhost:3000](http://localhost:3000).
 
-## Learn More
+## Configuration
 
-To learn more about Next.js, take a look at the following resources:
+Copy `.env.example` to `.env` and set the values you need:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Variable | Required | Description |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | Yes for AI extraction | Anthropic API key used to extract claims from submitted content. |
+| `ANTHROPIC_MODEL` | No | Model identifier used for extraction. |
+| `SEARCH_PROVIDER` | No | Search provider selection; `tavily` is configured in the example. |
+| `PAGE_PROVIDER` | No | Page evidence provider selection; `tavily` is configured in the example. |
+| `TAVILY_API_KEY` | No | Enables Tavily-backed search and page evidence. |
+| `TAVILY_DAILY_CREDIT_CAP` | No | Daily Tavily usage limit; defaults to `200`. |
+| `BRAVE_API_KEY` | No | Enables Brave search where configured. |
+| `DATABASE_URL` | No | SQLite connection string for Prisma, for example `file:./dev.db`. |
+| `INDICATOR_SALT` | No | Secret salt for hashing indicators; set a unique random value in production. |
+| `TRUSTED_PROXY` | No | Set to `true` only when the deployment is behind a trusted proxy. |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Do not commit `.env` or put API keys in source code. The repository ignores local
+environment files; `.env.example` contains placeholders only.
 
-## Deploy on Vercel
+## Development
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```powershell
+npm run dev          # Run the development server
+npm run build        # Create a production build
+npm start            # Serve the production build
+npm test -- --run    # Run the test suite once
+npx tsc --noEmit     # Type-check
+npm run lint         # Run ESLint
+npm run verify       # Run tests, type-check, and lint
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+For database schema changes, configure `DATABASE_URL` and use the Prisma
+migrations under `prisma/migrations`.
+
+## Privacy and limitations
+
+Only submit content you are comfortable processing with the configured services.
+When API keys are configured, some submitted text or extracted claims may be
+sent to those providers to perform extraction or verification. Review their
+privacy policies and your deployment configuration before use. ProofHire's
+results are informational and can be incomplete or incorrect; they are not a
+substitute for your own research.
